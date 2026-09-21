@@ -16,6 +16,8 @@ public:
 
 private:
     std::vector<uint8_t> m_rom;
+
+    int m_current_rom_bank = 1;
     
     // The physical RAM chips inside the console
     std::array<uint8_t, 0x2000> m_vram; // 8KB Video RAM
