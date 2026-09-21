@@ -18,6 +18,7 @@ set(SOURCES
         src/Core_GBC/gbc_core.cpp
         src/Core_GBC/mmu.cpp
         src/Core_GBC/cpu.cpp
+        src/Core_GBC/ppu.cpp
 )
 
 # Create the executable

@@ -30,32 +30,105 @@ uint16_t CPU::stack_pop() {
     return (high << 8) | low;
 }
 
+bool CPU::check_pending_interrupts() {
+    uint8_t ie = m_mmu.read(0xFFFF);
+    uint8_t if_reg = m_mmu.read(0xFF0F);
+
+    // Check if any interrupt is both requested (IF) and enabled (IE)
+    return (ie & if_reg & 0x1F) != 0;
+}
+
+bool CPU::handle_interrupts() {
+    if (m_interrupts_enabled) {
+        uint8_t ie = m_mmu.read(0xFFFF);
+        uint8_t if_reg = m_mmu.read(0xFF0F);
+        uint8_t requested = ie & if_reg & 0x1F;
+
+        if (requested != 0) {
+            // 1. Disable master interrupts
+            m_interrupts_enabled = false;
+
+            // 2. Find and service the highest priority interrupt (bit 0 to 4)
+            uint16_t vector = 0;
+            for (int i = 0; i < 5; ++i) {
+                if (requested & (1 << i)) {
+                    // Clear the flag in IF
+                    m_mmu.write(0xFF0F, if_reg & ~(1 << i));
+
+                    // Assign vector based on priority
+                    switch (i) {
+                        case 0: vector = 0x0040; break; // VBlank
+                        case 1: vector = 0x0048; break; // LCD STAT
+                        case 2: vector = 0x0050; break; // Timer
+                        case 3: vector = 0x0058; break; // Serial
+                        case 4: vector = 0x0060; break; // Joypad
+                    }
+                    break;
+                }
+            }
+
+            // 3. Push current PC to stack
+            stack_push(PC);
+
+            // 4. Jump to vector
+            PC = vector;
+
+            return true; // Interrupt serviced! Takes 20 cycles.
+        }
+    }
+    return false;
+}
+
+void CPU::print_trace() {
+    std::cout << "\n--- RECENT EXECUTION TRACE ---:\n";
+    for (uint16_t past_pc : pc_history) {
+        uint8_t op = m_mmu.read(past_pc);
+        std::printf("PC: 0x%04X | Opcode: 0x%02X\n", past_pc, op);
+    }
+    std::printf("Registers -> A: 0x%02X, BC: 0x%04X, DE: 0x%04X, HL: 0x%04X, SP: 0x%04X\n",
+                AF.high, BC.word, DE.word, HL.word, SP);
+}
+
 int CPU::clock_instruction() {
-    // If the CPU is halted, check if an interrupt wakes it up
+    // 1. Handle halted state wakeup check
     if (m_halted) {
-        // TODO: Replace this with your actual interrupt check when you implement interrupts
-        // if (has_pending_interrupts()) {
-        //     m_halted = false;
-        // } else {
-        return 4; // Just idle and consume 4 cycles while halted
-        // }
+        if (check_pending_interrupts()) {
+            m_halted = false;
+        } else {
+            // TEMPORARY BYPASS: Force-enable VBlank and wake up after the RAM clear
+            m_mmu.write(0xFFFF, 0x01); // Enable VBlank in IE
+            m_mmu.write(0xFF0F, 0x01); // Request VBlank in IF
+            m_halted = false;          // Wake up!
+        }
     }
 
-    // 1. FETCH Opcode
+    // 2. Check and service any pending interrupts before fetching the next instruction
+    if (handle_interrupts()) {
+        return 20; // Servicing an interrupt takes 20 cycles
+    }
+
+    // 3. FETCH Opcode
     uint8_t opcode = m_mmu.read(PC);
 
     // Remember where we started for debugging purposes
     uint16_t current_pc = PC;
     PC++;
 
+    // Log everything after the boot ROM hands off to cart space (> 0x0100)
+    if (PC >= 0x0100) {
+        uint8_t op = m_mmu.read(PC);
+        std::printf("CART TRACE -> PC: 0x%04X | Opcode: 0x%02X | A: 0x%02X | BC: 0x%04X\n", PC, op, AF.high, BC.word);
+    }
+
     pc_history.push_back(current_pc);
     if (pc_history.size() > 200) {
-        pc_history.pop_front();
+        // print_trace();
+        pc_history.clear();
     }
 
     int cycles = 0;
 
-    // 2. DECODE & EXECUTE
+    // 4. DECODE & EXECUTE
     switch (opcode) {
 
         case 0x00: { // NOP
@@ -110,7 +183,7 @@ int CPU::clock_instruction() {
         }
 
         case 0x78: { // LD A, B
-            AF.high = BC.high;
+            AF.high = BC.high; // Assuming your BC register struct exposes high/low or B directly
             cycles = 4;
             break;
         }
@@ -512,9 +585,16 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X2F: { // CPL
+        case 0x2F: { // CPL
+            AF.high = ~AF.high;
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            // Z: Unaffected
+            // N: Always set to 1
+            set_flag_n(true);
+            // H: Always set to 1
+            set_flag_h(true);
+            // C: Unaffected
+
             cycles = 4;
             break;
         }
@@ -980,6 +1060,12 @@ int CPU::clock_instruction() {
 
         case 0x76: { // HALT
             m_halted = true;
+
+            // Debug what registers look like when halting
+            uint8_t ie = m_mmu.read(0xFFFF);
+            uint8_t if_reg = m_mmu.read(0xFF0F);
+            std::printf("CPU HALTED at PC: 0x%04X | IE: 0x%02X | IF: 0x%02X\n", PC - 1, ie, if_reg);
+
             cycles = 4;
             break;
         }
@@ -1526,13 +1612,18 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0XCC: { // CALL Z, a16
+        case 0xCC: { // CALL Z, a16
             uint8_t low = m_mmu.read(PC++);
             uint8_t high = m_mmu.read(PC++);
-            uint16_t d16 = (high << 8) | low;
+            uint16_t address = (high << 8) | low;
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
-            cycles = 24;
+            if (get_flag_z()) {
+                stack_push(PC);
+                PC = address;
+                cycles = 24; // Condition met, call executed
+            } else {
+                cycles = 12; // Condition not met
+            }
             break;
         }
 
@@ -1624,9 +1715,9 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0XD9: { // RETI
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+        case 0xD9: { // RETI
+            PC = stack_pop();
+            m_interrupts_enabled = true;
             cycles = 16;
             break;
         }
@@ -2276,8 +2367,19 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X37: { // SWAP A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x37: { // SWAP A
+            uint8_t val = AF.high;
+            AF.high = ((val & 0x0F) << 4) | ((val & 0xF0) >> 4);
+
+            // Z: Set if result is 0
+            set_flag_z(AF.high == 0);
+            // N: Always 0
+            set_flag_n(false);
+            // H: Always 0
+            set_flag_h(false);
+            // C: Always 0
+            set_flag_c(false);
+
             cycles = 8;
             break;
         }
@@ -2642,8 +2744,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X6F: { // BIT 5, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x6F: { // BIT 5, A
+            // Check if Bit 5 of Register A is 0
+            bool bit_is_zero = (AF.high & (1 << 5)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -2845,8 +2957,8 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X8F: { // RES 1, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x8F: { // RES 1, A
+            AF.high &= ~(1 << 1);
             cycles = 8;
             break;
         }
@@ -2893,8 +3005,8 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X97: { // RES 2, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x97: { // RES 2, A
+            AF.high &= ~(1 << 2);
             cycles = 8;
             break;
         }
@@ -3037,8 +3149,8 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XAF: { // RES 5, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xAF: { // RES 5, A
+            AF.high &= ~(1 << 5);
             cycles = 8;
             break;
         }

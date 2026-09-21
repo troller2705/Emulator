@@ -21,6 +21,11 @@ public:
     // This is the core function we will call from run_frame()
     int clock_instruction();
 
+    bool check_pending_interrupts();
+    bool handle_interrupts();
+
+    void print_trace();
+
     int execute_cb(uint8_t cb_opcode);
 
     // Internal Registers

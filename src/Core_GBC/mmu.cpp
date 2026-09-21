@@ -13,6 +13,9 @@ void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
 }
 
 uint8_t MMU::read(uint16_t address) {
+    if (address >= 0xFF40 && address <= 0xFF45) {
+        return m_ppu.read_register(address);
+    }
     if (address <= 0x3FFF) {
         // ROM Bank 00 (Fixed - Always points to the start of the ROM)
         if (address < m_rom.size()) {
@@ -51,6 +54,10 @@ uint8_t MMU::read(uint16_t address) {
 }
 
 void MMU::write(uint16_t address, uint8_t value) {
+    if (address >= 0xFF40 && address <= 0xFF45) {
+        m_ppu.write_register(address, value);
+        return;
+    }
     if (address <= 0x7FFF) {
         // MBC1 Bank Switching: Writes to 0x2000 - 0x3FFF change the ROM bank
         if (address >= 0x2000 && address <= 0x3FFF) {

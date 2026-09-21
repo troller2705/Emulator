@@ -3,6 +3,8 @@
 #include <vector>
 #include <array>
 
+#include <ppu.h>
+
 class MMU {
 public:
     MMU();
@@ -16,6 +18,8 @@ public:
 
 private:
     std::vector<uint8_t> m_rom;
+
+    PPU m_ppu; // Declare the PPU instance here
 
     int m_current_rom_bank = 1;
     
