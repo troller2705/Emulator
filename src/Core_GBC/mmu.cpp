@@ -13,7 +13,9 @@ void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
 }
 
 uint8_t MMU::read(uint16_t address) {
-    if (address >= 0xFF40 && address <= 0xFF45) {
+    if (address == 0xFF0F) return m_if | 0xE0; // Top 3 bits are always 1
+    if (address == 0xFFFF) return m_ie;
+    if (address >= 0xFF40 && address <= 0xFF4B) {
         return m_ppu.read_register(address);
     }
     if (address <= 0x3FFF) {
@@ -54,7 +56,9 @@ uint8_t MMU::read(uint16_t address) {
 }
 
 void MMU::write(uint16_t address, uint8_t value) {
-    if (address >= 0xFF40 && address <= 0xFF45) {
+    if (address == 0xFF0F) { m_if = value; return; }
+    if (address == 0xFFFF) { m_ie = value; return; }
+    if (address >= 0xFF40 && address <= 0xFF4B) {
         m_ppu.write_register(address, value);
         return;
     }

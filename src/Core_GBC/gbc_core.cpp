@@ -39,21 +39,15 @@ bool GBCCore::load_rom(const std::vector<uint8_t>& rom_data) {
 }
 
 void GBCCore::run_frame() {
-    // 2. Define how many cycles make up one frame (4,194,304 Hz / 60 FPS)
     const int MAX_CYCLES = 69905;
     int cycles_this_frame = 0;
 
-    // 3. The Execution Loop
     while (cycles_this_frame < MAX_CYCLES) {
-
-        // Tell the CPU to fetch, decode, and execute ONE instruction
         int cycles_taken = m_cpu.clock_instruction();
-
         cycles_this_frame += cycles_taken;
 
-        // Later, we will add:
-        // m_ppu.tick(cycles_taken);
-        // m_apu.tick(cycles_taken);
+        // Pass BOTH the cycles and the MMU to the PPU
+        m_mmu.get_ppu()->step(cycles_taken, m_mmu);
     }
 }
 

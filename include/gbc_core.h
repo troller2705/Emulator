@@ -3,6 +3,7 @@
 #include <vector>
 #include "mmu.h"
 #include "cpu.h" // 1. Include the CPU header
+#include "ppu.h"
 
 class GBCCore {
 public:
@@ -10,6 +11,8 @@ public:
     ~GBCCore();
 
     bool load_rom(const std::vector<uint8_t>& rom_data);
+
+    PPU* get_ppu() { return m_mmu.get_ppu(); }
 
     // This is the function the Launcher calls 60 times a second
     void run_frame();
@@ -25,4 +28,5 @@ private:
     // The MMU must be declared BEFORE the CPU, because the CPU needs the MMU!
     MMU m_mmu;
     CPU m_cpu; // 2. Add the CPU
+    PPU m_ppu;
 };

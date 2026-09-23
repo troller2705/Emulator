@@ -4,6 +4,9 @@
 
 #include <cstdint>
 #include <vector>
+#include <array>
+
+class MMU;
 
 class PPU {
 public:
@@ -11,7 +14,9 @@ public:
     ~PPU() = default;
 
     // Core step function driven by your CPU / clock cycle loops
-    void step(int cycles);
+    void step(int cycles, MMU& mmu);
+
+    void render_scanline(MMU& mmu);
 
     // Memory read/write interface for PPU registers (like 0xFF40 LCDC, 0xFF44 LY)
     uint8_t read_register(uint16_t address) const;
@@ -27,6 +32,14 @@ public:
     uint8_t get_sprite_height() const { return (m_lcdc & 0x04) ? 16 : 8; }
     bool is_bg_window_enabled() const { return (m_lcdc & 0x01) != 0; }
 
+    // 160x144 Array of 32-bit ARGB pixels
+    std::array<uint32_t, 160 * 144> m_framebuffer{};
+
+    // Flag to tell main.cpp when to draw
+    bool frame_ready = false;
+
+    const uint32_t* get_framebuffer() const { return m_framebuffer.data(); }
+
 private:
     // Registers
     uint8_t m_lcdc; // LCD Control (0xFF40)
@@ -35,6 +48,12 @@ private:
     uint8_t m_scx;  // Scroll X (0xFF43)
     uint8_t m_ly;   // LCD Y-Coordinate (0xFF44)
     uint8_t m_lyc;  // LY Compare (0xFF45)
+
+    uint8_t m_bgp = 0xFC;  // 0xFF47 - Background Palette (Default 0xFC)
+    uint8_t m_obp0 = 0xFF; // 0xFF48 - Sprite Palette 0
+    uint8_t m_obp1 = 0xFF; // 0xFF49 - Sprite Palette 1
+    uint8_t m_wy = 0;      // 0xFF4A - Window Y
+    uint8_t m_wx = 0;      // 0xFF4B - Window X
 
     // Internal PPU Timing State
     int m_scanline_counter;

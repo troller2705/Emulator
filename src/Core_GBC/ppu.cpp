@@ -1,4 +1,6 @@
 #include "ppu.h"
+#include "mmu.h"
+#include <cstdlib>
 
 PPU::PPU()
     : m_lcdc(0x91), // Typical post-boot default value
@@ -19,6 +21,11 @@ uint8_t PPU::read_register(uint16_t address) const {
         case 0xFF43: return m_scx;
         case 0xFF44: return m_ly;
         case 0xFF45: return m_lyc;
+        case 0xFF47: return m_bgp;
+        case 0xFF48: return m_obp0;
+        case 0xFF49: return m_obp1;
+        case 0xFF4A: return m_wy;
+        case 0xFF4B: return m_wx;
         default: return 0xFF;
     }
 }
@@ -48,6 +55,11 @@ void PPU::write_register(uint16_t address, uint8_t value) {
             m_ly = 0;
             break;
         case 0xFF45: m_lyc = value; break;
+        case 0xFF47: m_bgp = value; break;
+        case 0xFF48: m_obp0 = value; break;
+        case 0xFF49: m_obp1 = value; break;
+        case 0xFF4A: m_wy = value; break;
+        case 0xFF4B: m_wx = value; break;
         default: break;
     }
 }
@@ -57,35 +69,95 @@ void PPU::change_mode(uint8_t mode) {
     m_stat = (m_stat & ~0x03) | (mode & 0x03);
 }
 
-void PPU::step(int cycles) {
+// Add the new render_scanline function:
+void PPU::render_scanline(MMU& mmu) {
+    uint16_t map_base = get_bg_tile_map_address();
+    uint16_t tile_base = get_tile_data_address();
+    bool is_signed = (tile_base == 0x8800);
+
+    // Read Scroll and Palette Registers
+    uint8_t scy = mmu.read(0xFF42);
+    uint8_t scx = mmu.read(0xFF43);
+    uint8_t bgp = mmu.read(0xFF47);
+
+    // Calculate background Y position
+    uint8_t y = (m_ly + scy) & 0xFF;
+    uint8_t tile_y = y / 8;
+    uint8_t pixel_y = y % 8;
+
+    for (int p_x = 0; p_x < 160; p_x++) {
+        uint8_t x = (p_x + scx) & 0xFF;
+        uint8_t tile_x = x / 8;
+
+        // Fetch Tile ID
+        uint16_t tile_address = map_base + (tile_y * 32) + tile_x;
+        uint8_t tile_id = mmu.read(tile_address);
+
+        // Find Tile Data Location
+        uint16_t tile_data_loc = tile_base;
+        if (is_signed) {
+            int8_t signed_id = static_cast<int8_t>(tile_id);
+            tile_data_loc += (signed_id + 128) * 16;
+        } else {
+            tile_data_loc += (tile_id * 16);
+        }
+
+        // Read the two bytes representing this row of 8 pixels
+        uint8_t byte1 = mmu.read(tile_data_loc + (pixel_y * 2));
+        uint8_t byte2 = mmu.read(tile_data_loc + (pixel_y * 2) + 1);
+
+        // Extract the 2-bit color ID
+        int bit_index = 7 - (x % 8);
+        uint8_t color_bit1 = (byte1 >> bit_index) & 1;
+        uint8_t color_bit2 = (byte2 >> bit_index) & 1;
+        uint8_t color_id = (color_bit2 << 1) | color_bit1;
+
+        // Map through Background Palette (BGP)
+        uint8_t actual_color = (bgp >> (color_id * 2)) & 0x03;
+
+        // Game Boy classic colors
+        uint32_t colors[4] = {0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000};
+        m_framebuffer[m_ly * 160 + p_x] = colors[actual_color];
+    }
+}
+
+// And update your PPU::step function to use it:
+void PPU::step(int cycles, MMU& mmu) {
     if (!is_lcd_enabled()) {
-        return; // PPU is disabled, skip rendering logic entirely
+        m_scanline_counter -= cycles;
+        if (m_scanline_counter <= 0) {
+            m_scanline_counter += 70224;
+            for (int i = 0; i < 160 * 144; i++) {
+                m_framebuffer[i] = 0xFFFFFFFF; // Blank white screen
+            }
+        }
+        return;
     }
 
     m_scanline_counter -= cycles;
-
     if (m_scanline_counter <= 0) {
-        // Each scanline takes 456 T-states (cycles)
         m_scanline_counter += 456;
+
+        // Call our new render function!
+        if (m_ly < 144) {
+            render_scanline(mmu);
+        }
+
         m_ly++;
 
-        // VBlank starts at scanline 144 up to 153
         if (m_ly == 144) {
-            change_mode(1); // Mode 1: VBlank
+            change_mode(1); // VBlank
+            frame_ready = true;
+
+            // --- NEW: Request VBlank Interrupt! ---
+            uint8_t current_if = mmu.read(0xFF0F);
+            mmu.write(0xFF0F, current_if | 0x01); // Set bit 0
+
         } else if (m_ly > 153) {
             m_ly = 0; // Restart frame
         }
 
-        // Handle active scanlines (0-143) modes 2 and 3
-        if (m_ly < 144) {
-            change_mode(2); // Mode 2: OAM Scan (simplified starting state)
-        }
-
-        // Check LY == LYC coincidence flag
-        if (m_ly == m_lyc) {
-            m_stat |= 0x04; // Set coincidence flag (Bit 2)
-        } else {
-            m_stat &= ~0x04;
-        }
+        if (m_ly == m_lyc) m_stat |= 0x04;
+        else               m_stat &= ~0x04;
     }
 }

@@ -8,6 +8,8 @@
 class MMU {
 public:
     MMU();
+
+    PPU* get_ppu() { return &m_ppu; }
     
     // The two most important functions in the emulator
     uint8_t read(uint16_t address);
@@ -27,4 +29,7 @@ private:
     std::array<uint8_t, 0x2000> m_vram; // 8KB Video RAM
     std::array<uint8_t, 0x2000> m_wram; // 8KB Work RAM
     std::array<uint8_t, 0x80>   m_hram; // 127 bytes High RAM
+
+    uint8_t m_if = 0; // 0xFF0F - Interrupt Flag
+    uint8_t m_ie = 0; // 0xFFFF - Interrupt Enable
 };
