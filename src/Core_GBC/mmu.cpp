@@ -46,6 +46,9 @@ uint8_t MMU::read(uint16_t address) {
     else if (address >= 0xFF80 && address <= 0xFFFE) {
         return m_hram[address - 0xFF80];
     }
+    else if (address >= 0xFE00 && address <= 0xFE9F) {
+        return m_oam[address - 0xFE00];
+    }
 
     // --- TEMPORARY VBLANK HACK ---
     if (address == 0xFF44) {
@@ -60,6 +63,15 @@ void MMU::write(uint16_t address, uint8_t value) {
     if (address == 0xFFFF) { m_ie = value; return; }
     if (address >= 0xFF40 && address <= 0xFF4B) {
         m_ppu.write_register(address, value);
+        return;
+    }
+    if (address == 0xFF46) {
+        // Start DMA transfer from source address (value * 0x100) to OAM (0xFE00)
+        uint16_t source_base = static_cast<uint16_t>(value) << 8;
+        for (int i = 0; i < 160; i++) {
+            uint8_t b = read(source_base + i);
+            write(0xFE00 + i, b);
+        }
         return;
     }
     if (address <= 0x7FFF) {
@@ -85,5 +97,8 @@ void MMU::write(uint16_t address, uint8_t value) {
     }
     else if (address >= 0xFF80 && address <= 0xFFFE) {
         m_hram[address - 0xFF80] = value;
+    }
+    else if (address >= 0xFE00 && address <= 0xFE9F) {
+        m_oam[address - 0xFE00] = value;
     }
 }

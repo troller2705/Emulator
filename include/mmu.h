@@ -20,6 +20,7 @@ public:
 
 private:
     std::vector<uint8_t> m_rom;
+    std::array<uint8_t, 160> m_oam;
 
     PPU m_ppu; // Declare the PPU instance here
 

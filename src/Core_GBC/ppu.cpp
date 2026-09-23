@@ -3,7 +3,7 @@
 #include <cstdlib>
 
 PPU::PPU()
-    : m_lcdc(0x91), // Typical post-boot default value
+    : m_lcdc(0x93), // Typical post-boot default value
       m_stat(0x85),
       m_scy(0),
       m_scx(0),
@@ -80,7 +80,10 @@ void PPU::render_scanline(MMU& mmu) {
     uint8_t scx = mmu.read(0xFF43);
     uint8_t bgp = mmu.read(0xFF47);
 
-    // Calculate background Y position
+    // Game Boy classic colors
+    uint32_t colors[4] = {0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000};
+
+    // --- 1. RENDER BACKGROUND ---
     uint8_t y = (m_ly + scy) & 0xFF;
     uint8_t tile_y = y / 8;
     uint8_t pixel_y = y % 8;
@@ -89,11 +92,9 @@ void PPU::render_scanline(MMU& mmu) {
         uint8_t x = (p_x + scx) & 0xFF;
         uint8_t tile_x = x / 8;
 
-        // Fetch Tile ID
         uint16_t tile_address = map_base + (tile_y * 32) + tile_x;
         uint8_t tile_id = mmu.read(tile_address);
 
-        // Find Tile Data Location
         uint16_t tile_data_loc = tile_base;
         if (is_signed) {
             int8_t signed_id = static_cast<int8_t>(tile_id);
@@ -102,22 +103,82 @@ void PPU::render_scanline(MMU& mmu) {
             tile_data_loc += (tile_id * 16);
         }
 
-        // Read the two bytes representing this row of 8 pixels
         uint8_t byte1 = mmu.read(tile_data_loc + (pixel_y * 2));
         uint8_t byte2 = mmu.read(tile_data_loc + (pixel_y * 2) + 1);
 
-        // Extract the 2-bit color ID
         int bit_index = 7 - (x % 8);
         uint8_t color_bit1 = (byte1 >> bit_index) & 1;
         uint8_t color_bit2 = (byte2 >> bit_index) & 1;
         uint8_t color_id = (color_bit2 << 1) | color_bit1;
 
-        // Map through Background Palette (BGP)
         uint8_t actual_color = (bgp >> (color_id * 2)) & 0x03;
-
-        // Game Boy classic colors
-        uint32_t colors[4] = {0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000};
         m_framebuffer[m_ly * 160 + p_x] = colors[actual_color];
+    }
+
+    // --- 2. RENDER SPRITES (OAM) ---
+    // Check if Object Display is enabled (LCDC Bit 1)
+    if (!(m_lcdc & 0x02)) return;
+
+    bool tall_sprites = (m_lcdc & 0x04) != 0; // LCDC Bit 2: 8x8 (0) or 8x16 (1)
+    int sprite_height = tall_sprites ? 16 : 8;
+
+    // Iterate through OAM (40 sprites, 4 bytes each: Y, X, Tile, Attributes)
+    for (int i = 0; i < 40; i++) {
+        uint16_t oam_addr = 0xFE00 + (i * 4);
+        int sprite_y = mmu.read(oam_addr) - 16;
+        int sprite_x = mmu.read(oam_addr + 1) - 8;
+        uint8_t tile_index = mmu.read(oam_addr + 2);
+        uint8_t attributes = mmu.read(oam_addr + 3);
+
+        // Check if sprite intersects current scanline (m_ly)
+        if (m_ly < sprite_y || m_ly >= sprite_y + sprite_height) {
+            continue;
+        }
+
+        bool y_flip = (attributes & 0x40) != 0;
+        bool x_flip = (attributes & 0x20) != 0;
+        bool use_obp1 = (attributes & 0x10) != 0;
+
+        uint8_t obp = mmu.read(use_obp1 ? 0xFF49 : 0xFF48);
+
+        // Determine vertical line within sprite
+        int line = m_ly - sprite_y;
+        if (y_flip) {
+            line = (sprite_height - 1) - line;
+        }
+
+        // Handle 8x16 tile addressing
+        if (tall_sprites) {
+            if (line < 8) {
+                tile_index &= 0xFE; // Top tile
+            } else {
+                tile_index |= 0x01; // Bottom tile
+                line -= 8;
+            }
+        }
+
+        uint16_t tile_data_loc = 0x8000 + (tile_index * 16);
+        uint8_t byte1 = mmu.read(tile_data_loc + (line * 2));
+        uint8_t byte2 = mmu.read(tile_data_loc + (line * 2) + 1);
+
+        // Render each of the 8 pixels horizontally
+        for (int x = 0; x < 8; x++) {
+            int px = sprite_x + x;
+
+            // Screen bounds check
+            if (px < 0 || px >= 160) continue;
+
+            int bit_index = x_flip ? x : (7 - x);
+            uint8_t color_bit1 = (byte1 >> bit_index) & 1;
+            uint8_t color_bit2 = (byte2 >> bit_index) & 1;
+            uint8_t color_id = (color_bit2 << 1) | color_bit1;
+
+            // CRITICAL: Color index 0 is transparent for sprites!
+            if (color_id == 0) continue;
+
+            uint8_t actual_color = (obp >> (color_id * 2)) & 0x03;
+            m_framebuffer[m_ly * 160 + px] = colors[actual_color];
+        }
     }
 }
 
