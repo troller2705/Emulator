@@ -29,6 +29,7 @@ private:
     // The physical RAM chips inside the console
     std::array<uint8_t, 0x2000> m_vram; // 8KB Video RAM
     std::array<uint8_t, 0x2000> m_wram; // 8KB Work RAM
+    std::array<uint8_t, 0x2000> m_sram; // 8KB Cartridge RAM
     std::array<uint8_t, 0x80>   m_hram; // 127 bytes High RAM
 
     uint8_t m_if = 0; // 0xFF0F - Interrupt Flag

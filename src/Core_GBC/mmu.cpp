@@ -6,6 +6,8 @@ MMU::MMU() {
     m_vram.fill(0);
     m_wram.fill(0);
     m_hram.fill(0);
+    m_oam.fill(0);
+    m_sram.fill(0);
 }
 
 void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
@@ -40,6 +42,9 @@ uint8_t MMU::read(uint16_t address) {
     else if (address >= 0x8000 && address <= 0x9FFF) {
         return m_vram[address - 0x8000];
     }
+    else if (address >= 0xA000 && address <= 0xBFFF) {
+        return m_sram[address - 0xA000];
+    }
     else if (address >= 0xC000 && address <= 0xDFFF) {
         return m_wram[address - 0xC000];
     }
@@ -61,10 +66,6 @@ uint8_t MMU::read(uint16_t address) {
 void MMU::write(uint16_t address, uint8_t value) {
     if (address == 0xFF0F) { m_if = value; return; }
     if (address == 0xFFFF) { m_ie = value; return; }
-    if (address >= 0xFF40 && address <= 0xFF4B) {
-        m_ppu.write_register(address, value);
-        return;
-    }
     if (address == 0xFF46) {
         // Start DMA transfer from source address (value * 0x100) to OAM (0xFE00)
         uint16_t source_base = static_cast<uint16_t>(value) << 8;
@@ -74,23 +75,34 @@ void MMU::write(uint16_t address, uint8_t value) {
         }
         return;
     }
+    if (address >= 0xFF40 && address <= 0xFF4B) {
+        m_ppu.write_register(address, value);
+        return;
+    }
     if (address <= 0x7FFF) {
-        // MBC1 Bank Switching: Writes to 0x2000 - 0x3FFF change the ROM bank
+        // MBC1 Bank Switching
         if (address >= 0x2000 && address <= 0x3FFF) {
-            // MBC1 only looks at the bottom 5 bits for this register
-            m_current_rom_bank = value & 0x1F;
+            // Set the lower 5 bits of the ROM bank
+            uint8_t lower_5 = value & 0x1F;
+            if (lower_5 == 0) lower_5 = 1; // Hardware quirk: Bank 0 becomes 1
 
-            // Hardware quirk: Bank 0 is automatically converted to Bank 1
-            if (m_current_rom_bank == 0) {
-                m_current_rom_bank = 1;
-            }
+            // Preserve the top bits, replace the bottom 5
+            m_current_rom_bank = (m_current_rom_bank & 0x60) | lower_5;
         }
-        // Even if we don't handle other MBC registers yet, we MUST return here
-        // so we don't accidentally write to read-only memory!
+        else if (address >= 0x4000 && address <= 0x5FFF) {
+            // Set the upper 2 bits of the ROM bank (Bits 5 and 6)
+            uint8_t upper_2 = value & 0x03;
+
+            // Preserve the bottom 5 bits, replace the top 2
+            m_current_rom_bank = (m_current_rom_bank & 0x1F) | (upper_2 << 5);
+        }
         return;
     }
     else if (address >= 0x8000 && address <= 0x9FFF) {
         m_vram[address - 0x8000] = value;
+    }
+    else if (address >= 0xA000 && address <= 0xBFFF) {
+        m_sram[address - 0xA000] = value;
     }
     else if (address >= 0xC000 && address <= 0xDFFF) {
         m_wram[address - 0xC000] = value;
