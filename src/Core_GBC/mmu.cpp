@@ -15,6 +15,16 @@ void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
 }
 
 uint8_t MMU::read(uint16_t address) {
+    if (address == 0xFF00) {
+        uint8_t val = m_joypad_select | 0xCF; // Top bits are always 1
+        if ((m_joypad_select & 0x10) == 0) { // Direction selected
+            val &= (m_joypad_state >> 4) | 0xF0;
+        }
+        if ((m_joypad_select & 0x20) == 0) { // Action Buttons selected
+            val &= (m_joypad_state & 0x0F) | 0xF0;
+        }
+        return val;
+    }
     if (address == 0xFF0F) return m_if | 0xE0; // Top 3 bits are always 1
     if (address == 0xFFFF) return m_ie;
     if (address >= 0xFF40 && address <= 0xFF4B) {
@@ -43,7 +53,11 @@ uint8_t MMU::read(uint16_t address) {
         return m_vram[address - 0x8000];
     }
     else if (address >= 0xA000 && address <= 0xBFFF) {
-        return m_sram[address - 0xA000];
+        if (!m_sram_enabled) return 0xFF;
+        if (m_current_ram_bank <= 0x03) {
+            uint32_t offset = (m_current_ram_bank * 0x2000) + (address - 0xA000);
+            return m_sram[offset];
+        }
     }
     else if (address >= 0xC000 && address <= 0xDFFF) {
         return m_wram[address - 0xC000];
@@ -64,6 +78,11 @@ uint8_t MMU::read(uint16_t address) {
 }
 
 void MMU::write(uint16_t address, uint8_t value) {
+    if (address == 0xFF00) {
+        // Only bits 4 and 5 are writable by the CPU
+        m_joypad_select = value & 0x30;
+        return;
+    }
     if (address == 0xFF0F) { m_if = value; return; }
     if (address == 0xFFFF) { m_ie = value; return; }
     if (address == 0xFF46) {
@@ -80,21 +99,27 @@ void MMU::write(uint16_t address, uint8_t value) {
         return;
     }
     if (address <= 0x7FFF) {
-        // MBC1 Bank Switching
-        if (address >= 0x2000 && address <= 0x3FFF) {
-            // Set the lower 5 bits of the ROM bank
-            uint8_t lower_5 = value & 0x1F;
-            if (lower_5 == 0) lower_5 = 1; // Hardware quirk: Bank 0 becomes 1
-
-            // Preserve the top bits, replace the bottom 5
-            m_current_rom_bank = (m_current_rom_bank & 0x60) | lower_5;
+        // --- MBC3 BANK SWITCHING ---
+        if (address <= 0x1FFF) {
+            // Enable / Disable SRAM and RTC
+            m_sram_enabled = ((value & 0x0F) == 0x0A);
+        }
+        else if (address >= 0x2000 && address <= 0x3FFF) {
+            // MBC3 writes all 7 bits of the ROM bank at once!
+            uint8_t bank = value & 0x7F;
+            if (bank == 0) bank = 1; // Hardware quirk: Bank 0 becomes 1
+            m_current_rom_bank = bank;
         }
         else if (address >= 0x4000 && address <= 0x5FFF) {
-            // Set the upper 2 bits of the ROM bank (Bits 5 and 6)
-            uint8_t upper_2 = value & 0x03;
-
-            // Preserve the bottom 5 bits, replace the top 2
-            m_current_rom_bank = (m_current_rom_bank & 0x1F) | (upper_2 << 5);
+            // RAM Bank OR Real-Time Clock (RTC) Register Select
+            if (value <= 0x03) {
+                m_current_ram_bank = value;
+            } else if (value >= 0x08 && value <= 0x0C) {
+                // RTC register selected (Stub this out for now)
+            }
+        }
+        else if (address >= 0x6000 && address <= 0x7FFF) {
+            // Latch Clock Data (Stub this out for now)
         }
         return;
     }
@@ -102,7 +127,15 @@ void MMU::write(uint16_t address, uint8_t value) {
         m_vram[address - 0x8000] = value;
     }
     else if (address >= 0xA000 && address <= 0xBFFF) {
-        m_sram[address - 0xA000] = value;
+        if (!m_sram_enabled) return;
+
+        // In MBC3, values 0-3 point to physical SRAM.
+        // (Values 0x08-0x0C point to the RTC registers, which we ignore)
+        if (m_current_ram_bank <= 0x03) {
+            uint32_t offset = (m_current_ram_bank * 0x2000) + (address - 0xA000);
+            m_sram[offset] = value;
+        }
+        return;
     }
     else if (address >= 0xC000 && address <= 0xDFFF) {
         m_wram[address - 0xC000] = value;
@@ -112,5 +145,25 @@ void MMU::write(uint16_t address, uint8_t value) {
     }
     else if (address >= 0xFE00 && address <= 0xFE9F) {
         m_oam[address - 0xFE00] = value;
+    }
+}
+
+void MMU::set_joypad_state(uint8_t new_state) {
+    bool request_interrupt = false;
+
+    // Check if a directional button transitioned from unpressed (1) to pressed (0)
+    if ((m_joypad_select & 0x10) == 0) {
+        if ((m_joypad_state & ~new_state) & 0xF0) request_interrupt = true;
+    }
+    // Check if an action button transitioned from unpressed (1) to pressed (0)
+    if ((m_joypad_select & 0x20) == 0) {
+        if ((m_joypad_state & ~new_state) & 0x0F) request_interrupt = true;
+    }
+
+    m_joypad_state = new_state;
+
+    // Trigger Joypad Interrupt (Bit 4 of IF) to wake the CPU from Stop/Halt
+    if (request_interrupt) {
+        m_if |= 0x10;
     }
 }

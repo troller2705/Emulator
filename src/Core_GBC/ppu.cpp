@@ -39,6 +39,7 @@ void PPU::write_register(uint16_t address, uint8_t value) {
             // If LCD was just disabled (Bit 7 transition 1 -> 0)
             if (was_enabled && !is_lcd_enabled()) {
                 m_ly = 0;
+                m_window_line = 0;
                 m_scanline_counter = 456;
                 change_mode(0); // Force Mode 0 (H-Blank) or safe state
             }
@@ -125,13 +126,20 @@ void PPU::render_scanline(MMU& mmu) {
 
     // --- 2. RENDER WINDOW LAYER ---
     if (is_window_enabled() && is_bg_window_enabled() && m_ly >= m_wy) {
+
+        // Use the internal counter instead of m_ly - m_wy
         uint16_t win_map_base = get_window_tile_map_address();
-        uint8_t win_y = m_ly - m_wy;
+        uint8_t win_y = m_window_line;
+
         uint8_t tile_y = win_y / 8;
         uint8_t pixel_y = win_y % 8;
 
+        bool window_drawn_on_scanline = false;
+
         for (int p_x = 0; p_x < 160; p_x++) {
-            if (p_x < m_wx - 7) continue; // Window X is offset by 7 internally
+            if (p_x < m_wx - 7) continue;
+
+            window_drawn_on_scanline = true; // We successfully drew at least one pixel
 
             uint8_t win_x = p_x - (m_wx - 7);
             uint8_t tile_x = win_x / 8;
@@ -155,9 +163,14 @@ void PPU::render_scanline(MMU& mmu) {
             uint8_t color_bit2 = (byte2 >> bit_index) & 1;
             uint8_t color_id = (color_bit2 << 1) | color_bit1;
 
-            scanline_bg_colors[p_x] = color_id; // Overwrite BG color tracking
+            scanline_bg_colors[p_x] = color_id;
             uint8_t actual_color = (bgp >> (color_id * 2)) & 0x03;
             m_framebuffer[m_ly * 160 + p_x] = colors[actual_color];
+        }
+
+        // Only increment the internal counter if the window was actually visible
+        if (window_drawn_on_scanline) {
+            m_window_line++;
         }
     }
 
@@ -257,6 +270,7 @@ void PPU::step(int cycles, MMU& mmu) {
 
         } else if (m_ly > 153) {
             m_ly = 0; // Restart frame
+            m_window_line = 0; // Reset internal window counter!
         }
 
         if (m_ly == m_lyc) m_stat |= 0x04;

@@ -495,9 +495,18 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X17: { // RLA
+        case 0x17: { // RLA
+            uint8_t old_carry = get_flag_c() ? 1 : 0;
+            uint8_t old_bit_7 = (AF.high >> 7) & 1;
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            AF.high = (AF.high << 1) | old_carry;
+
+            // Quirky GB behavior: RLA and RRA unconditionally clear the Zero flag!
+            set_flag_z(false);
+            set_flag_n(false);
+            set_flag_h(false);
+            set_flag_c(old_bit_7 == 1);
+
             cycles = 4;
             break;
         }
@@ -553,9 +562,18 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X1F: { // RRA
+        case 0x1F: { // RRA
+            uint8_t old_carry = get_flag_c() ? 1 : 0;
+            uint8_t old_bit_0 = AF.high & 1;
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            AF.high = (AF.high >> 1) | (old_carry << 7);
+
+            // Zero flag is unconditionally cleared
+            set_flag_z(false);
+            set_flag_n(false);
+            set_flag_h(false);
+            set_flag_c(old_bit_0 == 1);
+
             cycles = 4;
             break;
         }
@@ -572,9 +590,8 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X25: { // DEC H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+        case 0x25: { // DEC H
+            op_dec(HL.high);
             cycles = 4;
             break;
         }
@@ -589,9 +606,31 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X27: { // DAA
+        case 0x27: { // DAA
+            uint8_t a = AF.high;
+            int adjust = 0;
+            bool carry = get_flag_c();
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            // If we previously added/subtracted and crossed the BCD boundary, adjust
+            if (get_flag_h() || (!get_flag_n() && (a & 0x0F) > 9)) {
+                adjust |= 0x06;
+            }
+            if (carry || (!get_flag_n() && a > 0x99)) {
+                adjust |= 0x60;
+                carry = true;
+            }
+
+            if (get_flag_n()) {
+                a -= (uint8_t)adjust;
+            } else {
+                a += (uint8_t)adjust;
+            }
+
+            set_flag_z(a == 0);
+            set_flag_h(false); // DAA always clears Half-Carry
+            set_flag_c(carry);
+
+            AF.high = a;
             cycles = 4;
             break;
         }
@@ -614,9 +653,8 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X2D: { // DEC L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+        case 0x2D: { // DEC L
+            op_dec(HL.low);
             cycles = 4;
             break;
         }
@@ -831,8 +869,7 @@ int CPU::clock_instruction() {
         }
 
         case 0X45: { // LD B, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            BC.high = HL.low;
             cycles = 4;
             break;
         }
@@ -856,15 +893,13 @@ int CPU::clock_instruction() {
         }
 
         case 0X48: { // LD C, B
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            BC.low = BC.high;
             cycles = 4;
             break;
         }
 
         case 0X49: { // LD C, C
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            BC.low = BC.low;
             cycles = 4;
             break;
         }
@@ -876,15 +911,13 @@ int CPU::clock_instruction() {
         }
 
         case 0X4B: { // LD C, E
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            BC.low = DE.low;
             cycles = 4;
             break;
         }
 
         case 0X4C: { // LD C, H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            BC.low = HL.high;
             cycles = 4;
             break;
         }
@@ -896,8 +929,7 @@ int CPU::clock_instruction() {
         }
 
         case 0X4E: { // LD C, HL
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            BC.low = m_mmu.read(HL.word);
             cycles = 8;
             break;
         }
@@ -921,8 +953,7 @@ int CPU::clock_instruction() {
         }
 
         case 0X52: { // LD D, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            DE.high = DE.high;
             cycles = 4;
             break;
         }
@@ -943,8 +974,7 @@ int CPU::clock_instruction() {
         }
 
         case 0X55: { // LD D, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            DE.high = HL.low;
             cycles = 4;
             break;
         }
@@ -970,30 +1000,29 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0X59: { // LD E, C
+        case 0x59: { // LD E, C
+            // Copy the value of C (BC.low) into E (DE.low)
+            DE.low = BC.low;
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            // 4 cycles for a register-to-register load
             cycles = 4;
             break;
         }
 
         case 0X5A: { // LD E, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            DE.low = DE.high;
             cycles = 4;
             break;
         }
 
         case 0X5B: { // LD E, E
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            DE.low = DE.low;
             cycles = 4;
             break;
         }
 
         case 0X5C: { // LD E, H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            DE.low = HL.high;
             cycles = 4;
             break;
         }
@@ -1029,8 +1058,7 @@ int CPU::clock_instruction() {
         }
 
         case 0X61: { // LD H, C
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.high = BC.low;
             cycles = 4;
             break;
         }
@@ -1042,22 +1070,19 @@ int CPU::clock_instruction() {
         }
 
         case 0X63: { // LD H, E
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.high = DE.low;
             cycles = 4;
             break;
         }
 
         case 0X64: { // LD H, H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.high = HL.high;
             cycles = 4;
             break;
         }
 
         case 0X65: { // LD H, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.high = HL.low;
             cycles = 4;
             break;
         }
@@ -1087,8 +1112,7 @@ int CPU::clock_instruction() {
         }
 
         case 0X6A: { // LD L, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.low = DE.high;
             cycles = 4;
             break;
         }
@@ -1100,15 +1124,13 @@ int CPU::clock_instruction() {
         }
 
         case 0X6C: { // LD L, H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.low = HL.high;
             cycles = 4;
             break;
         }
 
         case 0X6D: { // LD L, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            HL.low = HL.low;
             cycles = 4;
             break;
         }
@@ -1377,92 +1399,67 @@ int CPU::clock_instruction() {
         }
 
         case 0X99: { // SBC A, C
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(BC.low);
             cycles = 4;
             break;
         }
 
         case 0X9A: { // SBC A, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(DE.high);
             cycles = 4;
             break;
         }
 
         case 0X9B: { // SBC A, E
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(DE.low);
             cycles = 4;
             break;
         }
 
         case 0X9C: { // SBC A, H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(HL.high);
             cycles = 4;
             break;
         }
 
         case 0X9D: { // SBC A, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(HL.low);
             cycles = 4;
             break;
         }
 
         case 0X9E: { // SBC A, HL
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(m_mmu.read(HL.word));
             cycles = 8;
             break;
         }
 
         case 0X9F: { // SBC A, A
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_sbc(AF.high);
             cycles = 4;
             break;
         }
 
         case 0xA0: { // AND B
-            // 1. Perform bitwise AND between A and B
-            AF.high &= BC.high;
-
-            // 2. Update flags (Z is set if result is 0, N=0, H=1, C=0)
-            set_flag_z(AF.high == 0);
-            set_flag_n(false);
-            set_flag_h(true);
-            set_flag_c(false);
-
+            op_and(BC.high);
             cycles = 4;
             break;
         }
 
         case 0XA1: { // AND A, C
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_and(BC.low);
             cycles = 4;
             break;
         }
 
         case 0XA2: { // AND A, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_and(DE.high);
             cycles = 4;
             break;
         }
 
         case 0xA3: { // AND E
-            // 1. Perform bitwise AND between A and E
-            AF.high &= DE.low;
-
-            // 2. Update flags (Z is set if result is 0, N=0, H=1, C=0)
-            set_flag_z(AF.high == 0);
-            set_flag_n(false);
-            set_flag_h(true);
-            set_flag_c(false);
-
+            op_and(DE.low);
             cycles = 4;
             break;
         }
@@ -1474,25 +1471,13 @@ int CPU::clock_instruction() {
         }
 
         case 0XA5: { // AND A, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_and(HL.low);
             cycles = 4;
             break;
         }
 
         case 0xA6: { // AND (HL)
-            // 1. Read value from memory at HL
-            uint8_t value = m_mmu.read(HL.word);
-
-            // 2. Perform bitwise AND with A
-            AF.high &= value;
-
-            // 3. Update flags (Z is set if result is 0, N=0, H=1, C=0)
-            set_flag_z(AF.high == 0);
-            set_flag_n(false);
-            set_flag_h(true);
-            set_flag_c(false);
-
+            op_and(m_mmu.read(HL.word));
             cycles = 8;
             break;
         }
@@ -1504,29 +1489,19 @@ int CPU::clock_instruction() {
         }
 
         case 0xA8: { // XOR B
-            // 1. Perform bitwise XOR between A and B
-            AF.high ^= BC.high;
-
-            // 2. Update flags (Z is set if result is 0, N, H, and C are cleared)
-            set_flag_z(AF.high == 0);
-            set_flag_n(false);
-            set_flag_h(false);
-            set_flag_c(false);
-
+            op_xor(BC.high);
             cycles = 4;
             break;
         }
 
         case 0XA9: { // XOR A, C
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_xor(BC.low);
             cycles = 4;
             break;
         }
 
         case 0XAA: { // XOR A, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_xor(DE.high);
             cycles = 4;
             break;
         }
@@ -1538,22 +1513,22 @@ int CPU::clock_instruction() {
         }
 
         case 0XAC: { // XOR A, H
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_xor(HL.high);
             cycles = 4;
             break;
         }
 
         case 0XAD: { // XOR A, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_xor(HL.low);
             cycles = 4;
             break;
         }
 
-        case 0XAE: { // XOR A, HL
+        case 0xAE: { // XOR (HL)
+            // Read the value from memory at HL and XOR it with A
+            op_xor(m_mmu.read(HL.word));
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            // 8 cycles: 4 for opcode fetch, 4 to read memory
             cycles = 8;
             break;
         }
@@ -1571,14 +1546,7 @@ int CPU::clock_instruction() {
         }
 
         case 0xB2: { // OR D
-            // 1. Perform bitwise OR between A and D
-            AF.high |= DE.high;
-
-            // 2. Update flags (Z is set if result is 0, N, H, and C are cleared)
-            set_flag_z(AF.high == 0);
-            set_flag_n(false);
-            set_flag_h(false);
-            set_flag_c(false);
+            op_or(DE.high);
 
             cycles = 4;
             break;
@@ -1590,121 +1558,68 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0XB4: { // OR A, H
+        case 0xB4: { // OR H
+            // Perform bitwise OR between A and H and update flags
+            op_or(HL.high);
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            // 4 cycles for a register-to-register operation
             cycles = 4;
             break;
         }
 
         case 0XB5: { // OR A, L
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_or(HL.low);
             cycles = 4;
             break;
         }
 
         case 0xB6: { // OR (HL)
-            // 1. Read value from memory at HL
-            uint8_t value = m_mmu.read(HL.word);
+            // Read the value from memory at HL and OR it with A
+            op_or(m_mmu.read(HL.word));
 
-            // 2. Perform bitwise OR with A
-            AF.high |= value;
-
-            // 3. Update flags (Z is set if result is 0, N, H, and C are cleared)
-            set_flag_z(AF.high == 0);
-            set_flag_n(false);
-            set_flag_h(false);
-            set_flag_c(false);
-
+            // 8 cycles: 4 for opcode fetch, 4 to read memory
             cycles = 8;
             break;
         }
 
         case 0XB7: { // OR A, A
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            op_or(AF.high);
             cycles = 4;
             break;
         }
 
         case 0xB9: { // CP C
-            uint8_t value = BC.low;
-
-            // Flags are set exactly like a subtraction (A - C)
-            set_flag_z(AF.high == value);
-            set_flag_n(true);
-            set_flag_h(((AF.high & 0x0F) - (value & 0x0F)) < 0);
-            set_flag_c(AF.high < value);
-
+            op_cp(BC.low);
             cycles = 4;
             break;
         }
 
-        case 0XBA: { // CP A, D
-
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+        case 0xBA: { // CP D
+            op_cp(DE.high);
             cycles = 4;
             break;
         }
 
         case 0xBB: { // CP E
-            uint8_t value = DE.low;
-            int result = AF.high - value;
-
-            // Update flags based on subtraction result
-            set_flag_z((result & 0xFF) == 0);
-            set_flag_n(true);
-            set_flag_h((AF.high & 0x0F) < (value & 0x0F));
-            set_flag_c(AF.high < value);
-
-            // 4 cycles for a register comparison
+            op_cp(DE.low);
             cycles = 4;
             break;
         }
 
         case 0xBC: { // CP H
-            uint8_t value = HL.high;
-            int result = AF.high - value;
-
-            // Update flags based on subtraction result
-            set_flag_z((result & 0xFF) == 0);
-            set_flag_n(true);
-            set_flag_h((AF.high & 0x0F) < (value & 0x0F));
-            set_flag_c(AF.high < value);
-
-            // 4 cycles for a register comparison
+            op_cp(HL.high);
             cycles = 4;
             break;
         }
 
         case 0xBD: { // CP L
-            uint8_t value = HL.low;
-            int result = AF.high - value;
-
-            // Update flags based on subtraction result
-            set_flag_z((result & 0xFF) == 0);
-            set_flag_n(true);
-            set_flag_h((AF.high & 0x0F) < (value & 0x0F));
-            set_flag_c(AF.high < value);
-
-            // 4 cycles for a register comparison
+            op_cp(HL.low);
             cycles = 4;
             break;
         }
 
         case 0xBE: { // CP (HL)
-            // 1. Read the value from memory at the address stored in HL
-            uint8_t value = m_mmu.read(HL.word);
-            int result = AF.high - value;
-
-            // 2. Update flags based on subtraction result
-            set_flag_z((result & 0xFF) == 0);
-            set_flag_n(true);
-            set_flag_h((AF.high & 0x0F) < (value & 0x0F));
-            set_flag_c(AF.high < value);
-
-            // 8 cycles: 4 for opcode fetch, 4 to read memory
+            op_cp(m_mmu.read(HL.word));
             cycles = 8;
             break;
         }
@@ -1741,13 +1656,24 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0XC4: { // CALL NZ, a16
+        case 0xC4: { // CALL NZ, a16
+            // 1. Fetch the 16-bit target address (low byte first)
             uint8_t low = m_mmu.read(PC++);
             uint8_t high = m_mmu.read(PC++);
-            uint16_t d16 = (high << 8) | low;
+            uint16_t address = (high << 8) | low;
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
-            cycles = 24;
+            // 2. Check if the Zero flag is NOT set
+            if (!get_flag_z()) {
+                // Push the current PC (return address) onto the stack
+                stack_push(PC);
+
+                // Jump to the target address
+                PC = address;
+
+                cycles = 24; // Condition met, call takes 24 cycles
+            } else {
+                cycles = 12; // Condition not met, skip the call
+            }
             break;
         }
 
@@ -1980,10 +1906,14 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0XDE: { // SBC A, n8
+        case 0xDE: { // SBC A, d8
+            // 1. Fetch the 8-bit immediate value
             uint8_t d8 = m_mmu.read(PC++);
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
+            // 2. Subtract value + carry from A and update flags
+            op_sbc(d8);
+
+            // 8 cycles: 4 for opcode fetch, 4 to read the immediate value
             cycles = 8;
             break;
         }
@@ -2120,10 +2050,13 @@ int CPU::clock_instruction() {
             break;
         }
 
-        case 0XF4: { // ILLEGAL_F4
+        case 0xF4: { // ILLEGAL OPCODE
+            std::printf("\n--- CRASH: Hit Illegal Opcode 0xF4 at PC 0x%04X ---\n", current_pc);
 
-            std::cerr << "PANIC! Unimplemented Opcode: 0x" << std::hex << (int)opcode << "\n"; exit(1);
-            cycles = 4;
+            // Dump the last 200 instructions and the exact register state
+            print_trace();
+
+            exit(1);
             break;
         }
 
@@ -2453,8 +2386,23 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X17: { // RL A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x17: { // RL A
+            // 1. Grab the top bit (Bit 7) before shifting
+            uint8_t old_bit_7 = (AF.high >> 7) & 1;
+
+            // 2. Grab the current state of the Carry flag
+            uint8_t old_carry = get_flag_c() ? 1 : 0;
+
+            // 3. Shift A left by 1, and insert the old Carry flag into Bit 0
+            AF.high = (AF.high << 1) | old_carry;
+
+            // 4. Set flags
+            set_flag_z(AF.high == 0);   // Set if the result is 0
+            set_flag_n(false);          // Always 0
+            set_flag_h(false);          // Always 0
+            set_flag_c(old_bit_7 == 1); // Set to the bit that fell off
+
+            // 8 cycles: 4 for CB, 4 for the operation
             cycles = 8;
             break;
         }
@@ -2529,14 +2477,41 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X1F: { // RR A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x1F: { // RR A
+            // 1. Grab Bit 0 before shifting
+            uint8_t old_bit_0 = AF.high & 1;
+
+            // 2. Grab the current state of the Carry flag
+            uint8_t old_carry = get_flag_c() ? 1 : 0;
+
+            // 3. Shift A right by 1, and insert the old Carry flag into Bit 7
+            AF.high = (AF.high >> 1) | (old_carry << 7);
+
+            // 4. Set flags
+            set_flag_z(AF.high == 0);   // Set if the result is 0
+            set_flag_n(false);          // Always 0
+            set_flag_h(false);          // Always 0
+            set_flag_c(old_bit_0 == 1); // Set to the bit that fell off
+
+            // 8 cycles: 4 for CB, 4 for the operation
             cycles = 8;
             break;
         }
 
-        case 0X20: { // SLA B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x20: { // SLA B
+            // 1. Grab Bit 7 before shifting (this goes into the Carry flag)
+            uint8_t old_bit_7 = (BC.high >> 7) & 1;
+
+            // 2. Shift B left by 1 (bit 0 automatically becomes 0)
+            BC.high <<= 1;
+
+            // 3. Update flags
+            set_flag_z(BC.high == 0);   // Set if result is 0
+            set_flag_n(false);          // Cleared
+            set_flag_h(false);          // Cleared
+            set_flag_c(old_bit_7 == 1); // Set to old bit 7
+
+            // 8 cycles: 4 for CB prefix, 4 for the instruction
             cycles = 8;
             break;
         }
@@ -2559,8 +2534,20 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X22: { // SLA D
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x22: { // SLA D
+            // 1. Grab bit 7 to put into the Carry flag
+            bool carry_out = (DE.high & (1 << 7)) != 0;
+
+            // 2. Shift left by 1 (bit 0 naturally becomes 0)
+            DE.high <<= 1;
+
+            // 3. Update flags
+            set_flag_z(DE.high == 0);
+            set_flag_n(false);
+            set_flag_h(false);
+            set_flag_c(carry_out);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -2584,19 +2571,61 @@ int CPU::execute_cb(uint8_t cb_opcode) {
         }
 
         case 0X24: { // SLA H
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+            // 1. Grab the top bit (Bit 7) before shifting
+            uint8_t old_bit_7 = (HL.high >> 7) & 1;
+
+            // 2. Shift H to the left by 1 (this automatically fills Bit 0 with 0)
+            HL.high <<= 1;
+
+            // 3. Set flags
+            set_flag_z(HL.high == 0);    // Set if the result is 0
+            set_flag_n(false);          // Always 0
+            set_flag_h(false);          // Always 0
+            set_flag_c(old_bit_7 == 1); // Set to the bit that fell off
+
+            // 8 cycles: 4 for CB, 4 for the operation
             cycles = 8;
             break;
         }
 
         case 0X25: { // SLA L
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+            // 1. Grab the top bit (Bit 7) before shifting
+            uint8_t old_bit_7 = (HL.low >> 7) & 1;
+
+            // 2. Shift H to the left by 1 (this automatically fills Bit 0 with 0)
+            HL.low <<= 1;
+
+            // 3. Set flags
+            set_flag_z(HL.low == 0);    // Set if the result is 0
+            set_flag_n(false);          // Always 0
+            set_flag_h(false);          // Always 0
+            set_flag_c(old_bit_7 == 1); // Set to the bit that fell off
+
+            // 8 cycles: 4 for CB, 4 for the operation
             cycles = 8;
             break;
         }
 
-        case 0X26: { // SLA HL
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x26: { // SLA (HL)
+            // 1. Read the value from memory at the address stored in HL
+            uint8_t value = m_mmu.read(HL.word);
+
+            // 2. Grab Bit 7 before shifting (this goes into the Carry flag)
+            uint8_t old_bit_7 = (value >> 7) & 1;
+
+            // 3. Shift left by 1 (bit 0 automatically becomes 0)
+            value <<= 1;
+
+            // 4. Write the modified value back to memory
+            m_mmu.write(HL.word, value);
+
+            // 5. Update flags
+            set_flag_z(value == 0);     // Set if result is 0
+            set_flag_n(false);          // Cleared
+            set_flag_h(false);          // Cleared
+            set_flag_c(old_bit_7 == 1); // Set to old bit 7
+
+            // 16 cycles: 4 for CB prefix, 4 for opcode, 4 to read, 4 to write
             cycles = 16;
             break;
         }
@@ -2786,8 +2815,20 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X3C: { // SRL H
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x3C: { // SRL H
+            // 1. Grab the bottom bit (Bit 0) before shifting
+            uint8_t old_bit_0 = HL.high & 1;
+
+            // 2. Shift H to the right by 1 (this automatically fills Bit 7 with 0)
+            HL.high >>= 1;
+
+            // 3. Set flags
+            set_flag_z(HL.high == 0);   // Set if the result is 0
+            set_flag_n(false);          // Always 0
+            set_flag_h(false);          // Always 0
+            set_flag_c(old_bit_0 == 1); // Set to the bit that fell off
+
+            // 8 cycles: 4 for CB prefix, 4 for the operation
             cycles = 8;
             break;
         }
@@ -2822,8 +2863,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X40: { // BIT 0, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x40: { // BIT 0, B
+            // Check if Bit 0 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 0)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -2922,8 +2973,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X48: { // BIT 1, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x48: { // BIT 1, B
+            // Check if Bit 1 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 1)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -2992,14 +3053,34 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X50: { // BIT 2, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x50: { // BIT 2, B
+            // Check if Bit 2 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 2)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
 
-        case 0X51: { // BIT 2, C
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x51: { // BIT 2, C
+            // Check if Bit 2 of Register C (BC.low) is 0
+            bool bit_is_zero = (BC.low & (1 << 2)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3062,8 +3143,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X58: { // BIT 3, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x58: { // BIT 3, B
+            // Check if Bit 3 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 3)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3080,8 +3171,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X5B: { // BIT 3, E
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x5B: { // BIT 3, E
+            // Check if Bit 3 of Register E (DE.low) is 0
+            bool bit_is_zero = (DE.low & (1 << 3)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3116,8 +3217,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X5F: { // BIT 3, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x5F: { // BIT 3, A
+            // Check if Bit 3 of Register A is 0
+            bool bit_is_zero = (AF.high & (1 << 3)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3176,14 +3287,34 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X67: { // BIT 4, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x67: { // BIT 4, A
+            // Check if Bit 4 of Register A is 0
+            bool bit_is_zero = (AF.high & (1 << 4)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
 
-        case 0X68: { // BIT 5, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x68: { // BIT 5, B
+            // Check if Bit 5 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 5)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3252,8 +3383,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X70: { // BIT 6, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x70: { // BIT 6, B
+            // Check if Bit 6 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 6)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3322,8 +3463,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X78: { // BIT 7, B
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x78: { // BIT 7, B
+            // Check if Bit 7 of Register B (BC.high) is 0
+            bool bit_is_zero = (BC.high & (1 << 7)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3334,8 +3485,18 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X7A: { // BIT 7, D
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x7A: { // BIT 7, D
+            // Check if Bit 7 of Register D (DE.high) is 0
+            bool bit_is_zero = (DE.high & (1 << 7)) == 0;
+
+            // Z: Set if the bit is 0, cleared if it is 1
+            set_flag_z(bit_is_zero);
+            // N: Always 0 (False)
+            set_flag_n(false);
+            // H: Always 1 (True)
+            set_flag_h(true);
+            // C: Untouched
+
             cycles = 8;
             break;
         }
@@ -3346,8 +3507,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X7C: { // BIT 7, H
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x7C: { // BIT 7, H
+            bool bit_is_zero = (HL.high & (1 << 7)) == 0;
+            set_flag_z(bit_is_zero);
+            set_flag_n(false);
+            set_flag_h(true);
             cycles = 8;
             break;
         }
@@ -3358,8 +3522,20 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0X7E: { // BIT 7, HL
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0x7E: { // BIT 7, (HL)
+            // 1. Read the value from memory at the address stored in HL
+            uint8_t value = m_mmu.read(HL.word);
+
+            // 2. Check if Bit 7 is 0
+            bool bit_is_zero = (value & (1 << 7)) == 0;
+
+            // 3. Set flags
+            set_flag_z(bit_is_zero);
+            set_flag_n(false);
+            set_flag_h(true);
+            // C: Untouched
+
+            // 12 cycles: 4 for CB prefix, 4 for opcode, 4 to read memory
             cycles = 12;
             break;
         }
@@ -3743,8 +3919,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XB2: { // RES 6, D
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xB2: { // RES 6, D
+            // Clear (force to 0) Bit 6 of Register D
+            DE.high &= ~(1 << 6);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -3767,8 +3946,17 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XB6: { // RES 6, HL
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xB6: { // RES 6, (HL)
+            // 1. Read the value from memory at the address stored in HL
+            uint8_t value = m_mmu.read(HL.word);
+
+            // 2. Clear (force to 0) Bit 6
+            value &= ~(1 << 6);
+
+            // 3. Write the modified value back to memory
+            m_mmu.write(HL.word, value);
+
+            // 16 cycles: 4 for CB, 4 for opcode, 4 to read memory, 4 to write memory
             cycles = 16;
             break;
         }
@@ -3791,8 +3979,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XBA: { // RES 7, D
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xBA: { // RES 7, D
+            // Clear (force to 0) Bit 7 of Register D
+            DE.high &= ~(1 << 7);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -3821,8 +4012,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XBF: { // RES 7, A
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xBF: { // RES 7, A
+            // Clear (force to 0) Bit 7 of Register A
+            AF.high &= ~(1 << 7);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -3863,8 +4057,17 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XC6: { // SET 0, HL
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xC6: { // SET 0, (HL)
+            // 1. Read the value from memory at the address stored in HL
+            uint8_t value = m_mmu.read(HL.word);
+
+            // 2. Set (force to 1) Bit 0
+            value |= (1 << 0);
+
+            // 3. Write the modified value back to memory
+            m_mmu.write(HL.word, value);
+
+            // 16 cycles: 4 for CB, 4 for opcode, 4 to read memory, 4 to write memory
             cycles = 16;
             break;
         }
@@ -4019,8 +4222,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XDC: { // SET 3, H
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xDC: { // SET 3, H
+            // Set (force to 1) Bit 3 of Register H
+            HL.high |= (1 << 3);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -4182,8 +4388,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XF2: { // SET 6, D
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xF2: { // SET 6, D
+            // Set (force to 1) Bit 6 of Register D
+            DE.high |= (1 << 6);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -4239,8 +4448,11 @@ int CPU::execute_cb(uint8_t cb_opcode) {
             break;
         }
 
-        case 0XFA: { // SET 7, D
-            std::cerr << "PANIC! Unimplemented CB Opcode: 0x" << std::hex << (int)cb_opcode << "\n"; exit(1);
+        case 0xFA: { // SET 7, D
+            // Set (force to 1) Bit 7 of Register D
+            DE.high |= (1 << 7);
+
+            // 8 cycles: 4 for CB prefix, 4 for execution
             cycles = 8;
             break;
         }
@@ -4283,7 +4495,6 @@ int CPU::execute_cb(uint8_t cb_opcode) {
     }
     return cycles;
 }
-
 
 void CPU::op_add(uint8_t value) {
     uint8_t a = AF.high;

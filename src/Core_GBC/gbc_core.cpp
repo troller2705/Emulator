@@ -51,7 +51,10 @@ void GBCCore::run_frame() {
     }
 }
 
-void GBCCore::set_input(uint8_t button_mask) {}
+void GBCCore::set_input(uint8_t button_mask) {
+    // Frontend sends 1 for pressed. Game Boy expects 0 for pressed.
+    m_mmu.set_joypad_state(~button_mask);
+}
 
 const uint32_t* GBCCore::get_video_buffer() const {
     return m_video_buffer.data();

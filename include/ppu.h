@@ -55,6 +55,8 @@ private:
     uint8_t m_wy = 0;      // 0xFF4A - Window Y
     uint8_t m_wx = 0;      // 0xFF4B - Window X
 
+    uint8_t m_window_line = 0;
+
     // Internal PPU Timing State
     int m_scanline_counter;
     
