@@ -37,11 +37,12 @@ void PPU::write_register(uint16_t address, uint8_t value) {
             m_lcdc = value;
 
             // If LCD was just disabled (Bit 7 transition 1 -> 0)
+            // If LCD was just disabled (Bit 7 transition 1 -> 0)
             if (was_enabled && !is_lcd_enabled()) {
                 m_ly = 0;
                 m_window_line = 0;
                 m_scanline_counter = 456;
-                change_mode(0); // Force Mode 0 (H-Blank) or safe state
+                m_stat = (m_stat & 0xFC) | 0; // Directly force Mode 0
             }
             break;
         }
@@ -65,9 +66,20 @@ void PPU::write_register(uint16_t address, uint8_t value) {
     }
 }
 
-void PPU::change_mode(uint8_t mode) {
+void PPU::change_mode(uint8_t mode, MMU& mmu) {
     // Clear lower 2 bits of STAT and set new mode
-    m_stat = (m_stat & ~0x03) | (mode & 0x03);
+    m_stat = (m_stat & 0xFC) | (mode & 0x03);
+
+    // Check STAT Interrupts
+    bool request_interrupt = false;
+    if (mode == 0 && (m_stat & (1 << 3))) request_interrupt = true;
+    if (mode == 1 && (m_stat & (1 << 4))) request_interrupt = true;
+    if (mode == 2 && (m_stat & (1 << 5))) request_interrupt = true;
+
+    if (request_interrupt) {
+        uint8_t if_reg = mmu.read(0xFF0F);
+        mmu.write(0xFF0F, if_reg | (1 << 1));
+    }
 }
 
 void PPU::render_scanline(MMU& mmu) {
@@ -261,7 +273,7 @@ void PPU::step(int cycles, MMU& mmu) {
         m_ly++;
 
         if (m_ly == 144) {
-            change_mode(1); // VBlank
+            change_mode(1, mmu); // VBlank
             frame_ready = true;
 
             // --- NEW: Request VBlank Interrupt! ---
@@ -273,7 +285,32 @@ void PPU::step(int cycles, MMU& mmu) {
             m_window_line = 0; // Reset internal window counter!
         }
 
-        if (m_ly == m_lyc) m_stat |= 0x04;
-        else               m_stat &= ~0x04;
+        // --- LY == LYC Check & Interrupt ---
+        if (m_ly == m_lyc) {
+            m_stat |= 0x04; // Set LY Coincidence Flag (Bit 2)
+
+            // Check if the game explicitly requested an LYC interrupt (Bit 6 of STAT)
+            if (m_stat & (1 << 6)) {
+                // Request STAT Interrupt (Bit 1 of IF) to wake the CPU!
+                uint8_t current_if = mmu.read(0xFF0F);
+                mmu.write(0xFF0F, current_if | 0x02);
+            }
+        } else {
+            m_stat &= ~0x04; // Clear LY Coincidence Flag
+        }
+    }
+}
+
+void PPU::check_lyc(MMU& mmu) {
+    if (m_ly == m_lyc) {
+        m_stat |= 0x04; // Set the LY Coincidence Flag (Bit 2)
+
+        // If the LYC Interrupt Enable flag is set (Bit 6), fire the STAT interrupt!
+        if (m_stat & (1 << 6)) {
+            uint8_t if_reg = mmu.read(0xFF0F);
+            mmu.write(0xFF0F, if_reg | (1 << 1));
+        }
+    } else {
+        m_stat &= ~0x04; // Clear the LY Coincidence Flag
     }
 }

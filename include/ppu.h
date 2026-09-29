@@ -59,8 +59,10 @@ private:
 
     // Internal PPU Timing State
     int m_scanline_counter;
-    
-    void change_mode(uint8_t mode);
+
+    void change_mode(uint8_t mode, MMU& mmu);
+
+    void check_lyc(MMU& mmu);
 };
 
 #endif

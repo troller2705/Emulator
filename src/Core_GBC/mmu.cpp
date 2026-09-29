@@ -1,8 +1,12 @@
 #include "mmu.h"
+#include "MBC1.h"
+#include "MBC2.h"
+#include "MBC3.h"
+#include "MBC5.h"
+#include "ROMOnly.h"
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
-
 #include "timer.h"
 
 MMU::MMU() {
@@ -10,18 +14,53 @@ MMU::MMU() {
     m_wram.fill(0);
     m_hram.fill(0);
     m_oam.fill(0);
-    m_sram.fill(0);
 }
 
 void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
-    m_rom = rom_data;
+    if (rom_data.size() < 0x0150) return;
+
+    // Parse the RAM size byte from the cartridge header
+    size_t ram_size = 0;
+    switch (rom_data[0x0149]) {
+        case 2: ram_size = 0x2000; break;  // 8KB
+        case 3: ram_size = 0x8000; break;  // 32KB
+        case 4: ram_size = 0x20000; break; // 128KB
+        case 5: ram_size = 0x10000; break; // 64KB
+    }
+
+    uint8_t cart_type = rom_data[0x0147];
+
+    if (cart_type == 0x00 || cart_type == 0x08 || cart_type == 0x09) {
+        m_cart = std::make_unique<ROMOnly>(rom_data, ram_size);
+        std::cout << "Mapper loaded: ROM Only\n";
+    }
+    else if (cart_type >= 0x01 && cart_type <= 0x03) {
+        m_cart = std::make_unique<MBC1>(rom_data, ram_size);
+        std::cout << "Mapper loaded: MBC1\n";
+    }
+    else if (cart_type == 0x05 || cart_type == 0x06) {
+        m_cart = std::make_unique<MBC2>(rom_data, ram_size);
+        std::cout << "Mapper loaded: MBC2\n";
+    }
+    else if (cart_type >= 0x0F && cart_type <= 0x13) {
+        m_cart = std::make_unique<MBC3>(rom_data, ram_size);
+        std::cout << "Mapper loaded: MBC3\n";
+    }
+    else if (cart_type >= 0x19 && cart_type <= 0x1E) {
+        m_cart = std::make_unique<MBC5>(rom_data, ram_size);
+        std::cout << "Mapper loaded: MBC5\n";
+    }
+    else {
+        std::cout << "Warning: Unsupported mapper type (0x" << std::hex << (int)cart_type << ")\n";
+    }
 }
 
 void MMU::load_battery(const std::string& save_path) {
+    if (!m_cart || m_cart->get_sram_size() == 0) return;
+
     std::ifstream file(save_path, std::ios::binary);
     if (file.is_open()) {
-        // Read directly into the SRAM array
-        file.read(reinterpret_cast<char*>(m_sram.data()), m_sram.size());
+        file.read(reinterpret_cast<char*>(m_cart->get_sram_ptr()), m_cart->get_sram_size());
         std::cout << "Loaded save file: " << save_path << "\n";
     } else {
         std::cout << "No existing save file found. Starting fresh.\n";
@@ -29,10 +68,11 @@ void MMU::load_battery(const std::string& save_path) {
 }
 
 void MMU::save_battery(const std::string& save_path) {
+    if (!m_cart || m_cart->get_sram_size() == 0) return;
+
     std::ofstream file(save_path, std::ios::binary);
     if (file.is_open()) {
-        // Write the entire SRAM array to disk
-        file.write(reinterpret_cast<const char*>(m_sram.data()), m_sram.size());
+        file.write(reinterpret_cast<const char*>(m_cart->get_sram_ptr()), m_cart->get_sram_size());
         std::cout << "Saved game to: " << save_path << "\n";
     } else {
         std::cerr << "Failed to create save file!\n";
@@ -40,95 +80,75 @@ void MMU::save_battery(const std::string& save_path) {
 }
 
 uint8_t MMU::read(uint16_t address) {
+    // --- DELEGATE TO CARTRIDGE ---
+    if (address <= 0x7FFF || (address >= 0xA000 && address <= 0xBFFF)) {
+        return m_cart ? m_cart->read(address) : 0xFF;
+    }
+
+    // --- INTERNAL MEMORY ROUTING ---
     if (address == 0xFF00) {
-        uint8_t val = m_joypad_select | 0xCF; // Top bits are always 1
-        if ((m_joypad_select & 0x10) == 0) { // Direction selected
+        uint8_t val = m_joypad_select | 0xCF;
+        if ((m_joypad_select & 0x10) == 0) {
             val &= (m_joypad_state >> 4) | 0xF0;
         }
-        if ((m_joypad_select & 0x20) == 0) { // Action Buttons selected
+        if ((m_joypad_select & 0x20) == 0) {
             val &= (m_joypad_state & 0x0F) | 0xF0;
         }
         return val;
     }
-    if (address == 0xFF0F) return m_if | 0xE0; // Top 3 bits are always 1
+
+    if (address == 0xFF0F) return m_if | 0xE0;
     if (address == 0xFFFF) return m_ie;
+
     if (address >= 0xFF40 && address <= 0xFF4B) {
         return m_ppu.read_register(address);
     }
-    if (address == 0xFF04) return m_div;
-    if (address == 0xFF05) return m_tima;
-    if (address == 0xFF06) return m_tma;
-    if (address == 0xFF07) return m_tac;
-    if (address <= 0x3FFF) {
-        // ROM Bank 00 (Fixed - Always points to the start of the ROM)
-        if (address < m_rom.size()) {
-            return m_rom[address];
-        } else {
-            return 0xFF;
-        }
-    }
-    else if (address >= 0x4000 && address <= 0x7FFF) {
-        // ROM Bank 01-7F (Switchable)
-        uint32_t offset = address - 0x4000;
-        uint32_t real_address = (m_current_rom_bank * 0x4000) + offset;
 
-        if (real_address < m_rom.size()) {
-            return m_rom[real_address];
-        } else {
-            return 0xFF;
-        }
+    if (address >= 0xFF04 && address <= 0xFF07) {
+        return m_timer ? m_timer->read_register(address) : 0xFF;
     }
-    else if (address >= 0x8000 && address <= 0x9FFF) {
+
+    if (address >= 0x8000 && address <= 0x9FFF) {
         return m_vram[address - 0x8000];
     }
-    else if (address >= 0xA000 && address <= 0xBFFF) {
-        if (!m_sram_enabled) return 0xFF;
-        if (m_current_ram_bank <= 0x03) {
-            uint32_t offset = (m_current_ram_bank * 0x2000) + (address - 0xA000);
-            return m_sram[offset];
-        }
-    }
-    else if (address >= 0xC000 && address <= 0xDFFF) {
+    if (address >= 0xC000 && address <= 0xDFFF) {
         return m_wram[address - 0xC000];
     }
-    else if (address >= 0xFF80 && address <= 0xFFFE) {
+    if (address >= 0xFF80 && address <= 0xFFFE) {
         return m_hram[address - 0xFF80];
     }
-    else if (address >= 0xFE00 && address <= 0xFE9F) {
+    if (address >= 0xFE00 && address <= 0xFE9F) {
         return m_oam[address - 0xFE00];
     }
-
-    // --- TEMPORARY VBLANK HACK ---
-    if (address == 0xFF44) {
-        return rand() % 154;
+    if (address >= 0xFF10 && address <= 0xFF3F) {
+        return m_apu.read_register(address);
     }
 
-    return 0xFF; 
+    return 0xFF;
 }
 
 void MMU::write(uint16_t address, uint8_t value) {
-    if (address == 0xFF00) {
-        // Only bits 4 and 5 are writable by the CPU
-        m_joypad_select = value & 0x30;
-        return;
-    }
-    if (address == 0xFF0F) { m_if = value; return; }
-    if (address == 0xFFFF) { m_ie = value; return; }
-    if (address == 0xFF04) {
-        // Writing ANY value to DIV resets it to 0.
-        if (m_timer != nullptr) {
-            m_timer->reset_div();
-        }
-        m_div = 0;
+    // --- DELEGATE TO CARTRIDGE ---
+    if (address <= 0x7FFF || (address >= 0xA000 && address <= 0xBFFF)) {
+        if (m_cart) m_cart->write(address, value);
         return;
     }
 
-    // Route the rest of the Timer registers
-    if (address == 0xFF05) { m_tima = value; return; }
-    if (address == 0xFF06) { m_tma = value; return; }
-    if (address == 0xFF07) { m_tac = value; return; }
+    // --- INTERNAL MEMORY ROUTING ---
+    if (address == 0xFF00) {
+        m_joypad_select = value & 0x30;
+        return;
+    }
+
+    if (address == 0xFF0F) { m_if = value; return; }
+    if (address == 0xFFFF) { m_ie = value; return; }
+
+    if (address >= 0xFF04 && address <= 0xFF07) {
+        if (m_timer) m_timer->write_register(address, value);
+        return;
+    }
+
     if (address == 0xFF46) {
-        // Start DMA transfer from source address (value * 0x100) to OAM (0xFE00)
         uint16_t source_base = static_cast<uint16_t>(value) << 8;
         for (int i = 0; i < 160; i++) {
             uint8_t b = read(source_base + i);
@@ -136,48 +156,18 @@ void MMU::write(uint16_t address, uint8_t value) {
         }
         return;
     }
+
     if (address >= 0xFF40 && address <= 0xFF4B) {
         m_ppu.write_register(address, value);
         return;
     }
-    if (address <= 0x7FFF) {
-        // --- MBC3 BANK SWITCHING ---
-        if (address <= 0x1FFF) {
-            // Enable / Disable SRAM and RTC
-            m_sram_enabled = ((value & 0x0F) == 0x0A);
-        }
-        else if (address >= 0x2000 && address <= 0x3FFF) {
-            // MBC3 writes all 7 bits of the ROM bank at once!
-            uint8_t bank = value & 0x7F;
-            if (bank == 0) bank = 1; // Hardware quirk: Bank 0 becomes 1
-            m_current_rom_bank = bank;
-        }
-        else if (address >= 0x4000 && address <= 0x5FFF) {
-            // RAM Bank OR Real-Time Clock (RTC) Register Select
-            if (value <= 0x03) {
-                m_current_ram_bank = value;
-            } else if (value >= 0x08 && value <= 0x0C) {
-                // RTC register selected (Stub this out for now)
-            }
-        }
-        else if (address >= 0x6000 && address <= 0x7FFF) {
-            // Latch Clock Data (Stub this out for now)
-        }
+    if (address >= 0xFF10 && address <= 0xFF3F) {
+        m_apu.write_register(address, value);
         return;
     }
-    else if (address >= 0x8000 && address <= 0x9FFF) {
-        m_vram[address - 0x8000] = value;
-    }
-    else if (address >= 0xA000 && address <= 0xBFFF) {
-        if (!m_sram_enabled) return;
 
-        // In MBC3, values 0-3 point to physical SRAM.
-        // (Values 0x08-0x0C point to the RTC registers, which we ignore)
-        if (m_current_ram_bank <= 0x03) {
-            uint32_t offset = (m_current_ram_bank * 0x2000) + (address - 0xA000);
-            m_sram[offset] = value;
-        }
-        return;
+    if (address >= 0x8000 && address <= 0x9FFF) {
+        m_vram[address - 0x8000] = value;
     }
     else if (address >= 0xC000 && address <= 0xDFFF) {
         m_wram[address - 0xC000] = value;
@@ -192,19 +182,15 @@ void MMU::write(uint16_t address, uint8_t value) {
 
 void MMU::set_joypad_state(uint8_t new_state) {
     bool request_interrupt = false;
-
-    // Check if a directional button transitioned from unpressed (1) to pressed (0)
     if ((m_joypad_select & 0x10) == 0) {
         if ((m_joypad_state & ~new_state) & 0xF0) request_interrupt = true;
     }
-    // Check if an action button transitioned from unpressed (1) to pressed (0)
     if ((m_joypad_select & 0x20) == 0) {
         if ((m_joypad_state & ~new_state) & 0x0F) request_interrupt = true;
     }
 
     m_joypad_state = new_state;
 
-    // Trigger Joypad Interrupt (Bit 4 of IF) to wake the CPU from Stop/Halt
     if (request_interrupt) {
         m_if |= 0x10;
     }

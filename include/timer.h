@@ -1,15 +1,20 @@
 #pragma once
 #include <cstdint>
 
-class MMU; // Forward declaration to avoid circular includes
+class MMU;
 
 class Timer {
 private:
     MMU& m_mmu;
-    int m_div_counter;
-    int m_tima_counter;
+    int m_div_counter = 0;
+    int m_tima_counter = 1024;
 
-    // Helper to get the current cycle threshold based on TAC bits 1-0
+    // Timer owns its own memory registers now
+    uint8_t m_div = 0;
+    uint8_t m_tima = 0;
+    uint8_t m_tma = 0;
+    uint8_t m_tac = 0;
+
     int get_frequency_cycles() const;
 
 public:
@@ -17,6 +22,7 @@ public:
 
     void tick(int cycles);
 
-    // Call this from your MMU whenever the CPU attempts to write to 0xFF04
-    void reset_div();
+    // Standardized hardware interface
+    uint8_t read_register(uint16_t address) const;
+    void write_register(uint16_t address, uint8_t value);
 };

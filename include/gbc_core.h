@@ -2,34 +2,38 @@
 #include <cstdint>
 #include <vector>
 #include "mmu.h"
-#include "cpu.h" // 1. Include the CPU header
+#include "cpu.h"
+#include "timer.h"
+#include "IEmulatorCore.h"
 #include "ppu.h"
 
-class GBCCore {
+class GBCCore : public IEmulatorCore {
+private:
+    MMU m_mmu;
+    CPU m_cpu;
+    Timer m_timer;
+
+    std::string m_current_save_path;
+
 public:
     GBCCore();
-    ~GBCCore();
+    ~GBCCore() override; // Declare destructor here, implement in .cpp
 
-    bool load_rom(const std::vector<uint8_t>& rom_data);
+    bool load_rom(const std::vector<uint8_t>& rom_data) override;
+    void reset() override {} // Stub for now
+    void run_frame() override;
 
-    void load_battery(const std::string& path) { m_mmu.load_battery(path); }
-    void save_battery(const std::string& path) { m_mmu.save_battery(path); }
+    // 3. Match IEmulatorCore exactly
+    const void* get_video_buffer() const override;
+    int get_video_width() const override { return 160; }
+    int get_video_height() const override { return 144; }
 
-    PPU* get_ppu() { return m_mmu.get_ppu(); }
+    const float* get_audio_buffer() const override;
+    size_t get_audio_sample_count() const override;
 
-    // This is the function the Launcher calls 60 times a second
-    void run_frame();
+    // 4. Match IEmulatorCore exactly (uint32_t instead of uint8_t)
+    void set_input(uint32_t input_state) override;
 
-    void set_input(uint8_t button_mask);
-    const uint32_t* get_video_buffer() const;
-
-private:
-    std::vector<uint32_t> m_video_buffer;
-
-    // IMPORTANT: In C++, member variables are initialized in the order
-    // they are declared here.
-    // The MMU must be declared BEFORE the CPU, because the CPU needs the MMU!
-    MMU m_mmu;
-    CPU m_cpu; // 2. Add the CPU
-    PPU m_ppu;
+    void load_battery(const std::string& path) override { m_mmu.load_battery(path); }
+    void save_battery(const std::string& path) override { m_mmu.save_battery(path); }
 };

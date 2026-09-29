@@ -20,6 +20,7 @@ set(SOURCES
         src/Core_GBC/cpu.cpp
         src/Core_GBC/ppu.cpp
         src/Core_GBC/timer.cpp
+        src/Core_GBC/apu.cpp
 )
 
 # Create the executable

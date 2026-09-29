@@ -1,11 +1,10 @@
 #include "timer.h"
-#include "mmu.h" // Assuming this is your MMU header
+#include "mmu.h"
 
-Timer::Timer(MMU& mmu) : m_mmu(mmu), m_div_counter(0), m_tima_counter(1024) {}
+Timer::Timer(MMU& mmu) : m_mmu(mmu) {}
 
 int Timer::get_frequency_cycles() const {
-    uint8_t tac = m_mmu.read(0xFF07);
-    switch (tac & 0x03) {
+    switch (m_tac & 0x03) {
         case 0: return 1024; // 4096 Hz
         case 1: return 16;   // 262144 Hz
         case 2: return 64;   // 65536 Hz
@@ -14,48 +13,52 @@ int Timer::get_frequency_cycles() const {
     return 1024;
 }
 
-void Timer::reset_div() {
-    // When DIV is written to, reset both the register and the internal cycle counter
-    m_mmu.write(0xFF04, 0x00);
-    m_div_counter = 0;
+uint8_t Timer::read_register(uint16_t address) const {
+    switch (address) {
+        case 0xFF04: return m_div;
+        case 0xFF05: return m_tima;
+        case 0xFF06: return m_tma;
+        case 0xFF07: return m_tac;
+    }
+    return 0xFF;
+}
+
+void Timer::write_register(uint16_t address, uint8_t value) {
+    switch (address) {
+        case 0xFF04:
+            // The CPU writing ANY value to DIV resets it to 0
+            m_div = 0;
+            m_div_counter = 0;
+            break;
+        case 0xFF05: m_tima = value; break;
+        case 0xFF06: m_tma = value; break;
+        case 0xFF07: m_tac = value; break;
+    }
 }
 
 void Timer::tick(int cycles) {
-    // 1. Advance the DIV register (increments every 256 cycles)
+    // 1. Advance the DIV register
     m_div_counter += cycles;
     if (m_div_counter >= 256) {
         m_div_counter -= 256;
-        uint8_t current_div = m_mmu.read(0xFF04);
-        m_mmu.write(0xFF04, current_div + 1); // Normal memory write, don't trigger reset
+        m_div++; // Internal increment, bypasses the MMU!
     }
 
     // 2. Check if TIMA is enabled (Bit 2 of TAC)
-    uint8_t tac = m_mmu.read(0xFF07);
-    if ((tac & (1 << 2)) != 0) {
-
+    if ((m_tac & (1 << 2)) != 0) {
         m_tima_counter -= cycles;
 
-        // If enough cycles have passed to step the timer
         if (m_tima_counter <= 0) {
-            // Reset the counter to the current frequency threshold
             m_tima_counter += get_frequency_cycles();
 
-            uint8_t tima = m_mmu.read(0xFF05);
+            if (m_tima == 0xFF) {
+                m_tima = m_tma; // Timer Overflow!
 
-            if (tima == 0xFF) {
-                // Timer Overflow!
-
-                // Reload TIMA with the value in TMA (0xFF06)
-                uint8_t tma = m_mmu.read(0xFF06);
-                m_mmu.write(0xFF05, tma);
-
-                // Request a Timer Interrupt (Bit 2 of IF at 0xFF0F)
+                // Request a Timer Interrupt from the MMU (Bit 2 of IF)
                 uint8_t if_reg = m_mmu.read(0xFF0F);
                 m_mmu.write(0xFF0F, if_reg | (1 << 2));
-
             } else {
-                // Normal increment
-                m_mmu.write(0xFF05, tima + 1);
+                m_tima++;
             }
         }
     }

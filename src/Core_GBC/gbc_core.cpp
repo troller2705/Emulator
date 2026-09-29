@@ -1,12 +1,17 @@
 #include "gbc_core.h"
 #include <iostream>
 
-// 1. Pass the MMU into the CPU using an initializer list
-GBCCore::GBCCore() : m_mmu(), m_cpu(m_mmu) {
-    m_video_buffer.resize(160 * 144, 0xFF000000);
+// 1. Initialize components and link the timer immediately
+GBCCore::GBCCore() : m_mmu(), m_cpu(m_mmu), m_timer(m_mmu) {
+    m_mmu.link_timer(&m_timer);
 }
 
-GBCCore::~GBCCore() {}
+// 2. Save SRAM to disk when the core shuts down
+GBCCore::~GBCCore() {
+    if (!m_current_save_path.empty()) {
+        m_mmu.save_battery(m_current_save_path);
+    }
+}
 
 bool GBCCore::load_rom(const std::vector<uint8_t>& rom_data) {
     if (rom_data.size() < 0x0150) {
@@ -14,16 +19,16 @@ bool GBCCore::load_rom(const std::vector<uint8_t>& rom_data) {
         return false;
     }
 
-    // 1. CRUCIAL STEP: Hand the ROM data over to the MMU!
     m_mmu.load_rom(rom_data);
 
-    // 2. Fetch the title byte-by-byte through the MMU
-    char title[17] = {0}; // 16 chars + null terminator
+    char title[17] = {0};
     for (uint16_t i = 0; i < 16; i++) {
         title[i] = m_mmu.read(0x0134 + i);
     }
 
-    // 3. Fetch the hardware flags
+    // Cache the save path for the destructor
+    m_current_save_path = std::string(title) + ".sav";
+
     uint8_t cart_type = m_mmu.read(0x0147);
     uint8_t rom_size  = m_mmu.read(0x0148);
     uint8_t ram_size  = m_mmu.read(0x0149);
@@ -39,23 +44,38 @@ bool GBCCore::load_rom(const std::vector<uint8_t>& rom_data) {
 }
 
 void GBCCore::run_frame() {
-    const int MAX_CYCLES = 69905;
+    // Clear last frame's audio
+    m_mmu.get_apu()->clear_buffer();
+
+    const int CYCLES_PER_FRAME = 70224;
     int cycles_this_frame = 0;
 
-    while (cycles_this_frame < MAX_CYCLES) {
-        int cycles_taken = m_cpu.clock_instruction();
-        cycles_this_frame += cycles_taken;
+    while (cycles_this_frame < CYCLES_PER_FRAME) {
+        int cycles = m_cpu.clock_instruction();
+        m_timer.tick(cycles);
+        m_mmu.get_ppu()->step(cycles, m_mmu);
 
-        // Pass BOTH the cycles and the MMU to the PPU
-        m_mmu.get_ppu()->step(cycles_taken, m_mmu);
+        // Drive the audio processor
+        m_mmu.get_apu()->tick(cycles);
+
+        cycles_this_frame += cycles;
     }
 }
 
-void GBCCore::set_input(uint8_t button_mask) {
-    // Frontend sends 1 for pressed. Game Boy expects 0 for pressed.
-    m_mmu.set_joypad_state(~button_mask);
+// 3. Signature matches uint32_t from header
+void GBCCore::set_input(uint32_t input_state) {
+    m_mmu.set_joypad_state(~static_cast<uint8_t>(input_state));
 }
 
-const uint32_t* GBCCore::get_video_buffer() const {
-    return m_video_buffer.data();
+// 4. Return the PPU's buffer directly as a void*
+const void* GBCCore::get_video_buffer() const {
+    return m_mmu.get_ppu()->get_framebuffer();
+}
+
+const float* GBCCore::get_audio_buffer() const {
+    return m_mmu.get_apu()->get_audio_buffer();
+}
+
+size_t GBCCore::get_audio_sample_count() const {
+    return m_mmu.get_apu()->get_audio_sample_count();
 }

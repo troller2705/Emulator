@@ -2,9 +2,10 @@
 #include <cstdint>
 #include <vector>
 #include <array>
-
-#include <ppu.h>
-#include <string>
+#include <memory>
+#include "ppu.h"
+#include "apu.h"
+#include "ICartridge.h"
 
 class Timer; // 1. Forward declare the Timer class here
 
@@ -13,6 +14,9 @@ public:
     MMU();
 
     PPU* get_ppu() { return &m_ppu; }
+    const PPU* get_ppu() const { return &m_ppu; }
+    APU* get_apu() { return &m_apu; }
+    const APU* get_apu() const { return &m_apu; }
 
     // The two most important functions in the emulator
     uint8_t read(uint16_t address);
@@ -32,32 +36,21 @@ public:
     void save_battery(const std::string& save_path);
 
 private:
-    Timer* m_timer = nullptr; // 3. Add the internal pointer
+    Timer* m_timer = nullptr;
+    PPU m_ppu;
+    APU m_apu;
 
-    std::vector<uint8_t> m_rom;
+    std::unique_ptr<ICartridge> m_cart = nullptr; // REPLACES m_rom and m_sram!
+
     std::array<uint8_t, 160> m_oam;
+    std::array<uint8_t, 0x2000> m_vram;
+    std::array<uint8_t, 0x2000> m_wram;
+    std::array<uint8_t, 0x80>   m_hram;
 
-    PPU m_ppu; // Declare the PPU instance here
-
-    int m_current_rom_bank = 1;
-    
-    // The physical RAM chips inside the console
-    std::array<uint8_t, 0x2000> m_vram; // 8KB Video RAM
-    std::array<uint8_t, 0x2000> m_wram; // 8KB Work RAM
-    std::array<uint8_t, 0x8000> m_sram; // 32KB Cartridge RAM
-    std::array<uint8_t, 0x80>   m_hram; // 127 bytes High RAM
-
-    uint8_t m_mbc1_mode = 0;
-    uint8_t m_current_ram_bank = 0;
-    bool m_sram_enabled = false;
-
-    uint8_t m_if = 0; // 0xFF0F - Interrupt Flag
-    uint8_t m_ie = 0; // 0xFFFF - Interrupt Enable
-    uint8_t m_div = 0;  // 0xFF04
-    uint8_t m_tima = 0; // 0xFF05
-    uint8_t m_tma = 0;  // 0xFF06
-    uint8_t m_tac = 0;  // 0xFF07
+    // Timer and Interrupt registers
+    uint8_t m_if = 0;
+    uint8_t m_ie = 0;
 
     uint8_t m_joypad_select = 0xCF;
-    uint8_t m_joypad_state = 0xFF; // 0 = pressed, 1 = unpressed
+    uint8_t m_joypad_state = 0xFF;
 };
