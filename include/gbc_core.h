@@ -36,4 +36,10 @@ public:
 
     void load_battery(const std::string& path) override { m_mmu.load_battery(path); }
     void save_battery(const std::string& path) override { m_mmu.save_battery(path); }
+
+    void step_instruction() override;
+    CPUState get_cpu_state() const override;
+
+    uint8_t debug_read_memory(uint16_t address) override;
+    void debug_write_memory(uint16_t address, uint8_t value) override;
 };

@@ -3,8 +3,20 @@
 #include <vector>
 #include <string>
 
+struct CPUState {
+    uint8_t A, F, B, C, D, E, H, L;
+    uint16_t PC, SP;
+};
+
 class IEmulatorCore {
 public:
+
+    virtual void step_instruction() = 0;
+    virtual CPUState get_cpu_state() const = 0;
+
+    virtual uint8_t debug_read_memory(uint16_t address) = 0;
+    virtual void debug_write_memory(uint16_t address, uint8_t value) = 0;
+
     // A virtual destructor ensures derived hardware cores clean up their specific memory
     virtual ~IEmulatorCore() = default;
 

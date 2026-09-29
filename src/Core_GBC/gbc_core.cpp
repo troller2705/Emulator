@@ -79,3 +79,35 @@ const float* GBCCore::get_audio_buffer() const {
 size_t GBCCore::get_audio_sample_count() const {
     return m_mmu.get_apu()->get_audio_sample_count();
 }
+
+void GBCCore::step_instruction() {
+    int cycles = m_cpu.clock_instruction();
+    m_timer.tick(cycles);
+    m_mmu.get_ppu()->step(cycles, m_mmu);
+    m_mmu.get_apu()->tick(cycles);
+}
+
+CPUState GBCCore::get_cpu_state() const {
+    // Populate this based on how your CPU registers are actually stored in cpu.h
+    // Assuming you have getters or direct access to them:
+    CPUState state;
+    state.A = m_cpu.AF.high; // or m_cpu.get_A(), etc.
+    state.F = m_cpu.AF.low;
+    state.B = m_cpu.BC.high;
+    state.C = m_cpu.BC.low;
+    state.D = m_cpu.DE.high;
+    state.E = m_cpu.DE.low;
+    state.H = m_cpu.HL.high;
+    state.L = m_cpu.HL.low;
+    state.PC = m_cpu.PC;
+    state.SP = m_cpu.SP;
+    return state;
+}
+
+uint8_t GBCCore::debug_read_memory(uint16_t address) {
+    return m_mmu.read(address);
+}
+
+void GBCCore::debug_write_memory(uint16_t address, uint8_t value) {
+    m_mmu.write(address, value);
+}

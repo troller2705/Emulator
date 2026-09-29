@@ -5,12 +5,9 @@ project(AllInOneEmulator)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Tell CMake where to find our public headers
-include_directories(include)
-
-# Find the SDL2 library on your system
+# Find dependencies
 find_package(SDL2 REQUIRED CONFIG)
-include_directories(${SDL2_INCLUDE_DIRS})
+find_package(imgui CONFIG REQUIRED)
 
 # Define the source files
 set(SOURCES
@@ -21,14 +18,20 @@ set(SOURCES
         src/Core_GBC/ppu.cpp
         src/Core_GBC/timer.cpp
         src/Core_GBC/apu.cpp
+        src/imgui/imgui_impl_sdl2.cpp
+        src/imgui/imgui_impl_sdlrenderer2.cpp
 )
 
 # Create the executable
 add_executable(EmulatorLauncher ${SOURCES})
 
-# Link using the imported target
+# Tell CMake where to find our public headers for THIS target specifically
+target_include_directories(EmulatorLauncher PRIVATE include)
+
+# Link libraries to the target
 target_link_libraries(EmulatorLauncher
         PRIVATE
         $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
         $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+        imgui::imgui
 )
