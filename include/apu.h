@@ -42,7 +42,7 @@ private:
     int m_ch1_duty_step = 0;
     int m_ch1_length_timer = 0;
     int m_ch1_envelope_timer = 0;
-    int m_ch1_current_volume = 0;
+    float m_ch1_current_volume = 0;
 
     // --- FREQUENCY SWEEP STATE ---
     int m_ch1_sweep_timer = 0;
@@ -67,7 +67,7 @@ private:
     // --- CHANNEL 2 ACTIVE STATE ---
     int m_ch2_length_timer = 0;
     int m_ch2_envelope_timer = 0;
-    int m_ch2_current_volume = 0;
+    float m_ch2_current_volume = 0;
 
     // --- CHANNEL 3 REGISTERS & RAM ---
     uint8_t m_nr30 = 0x7F; // DAC Power
@@ -95,7 +95,7 @@ private:
     int m_ch4_timer = 0;
     int m_ch4_length_timer = 0;
     int m_ch4_envelope_timer = 0;
-    int m_ch4_current_volume = 0;
+    float m_ch4_current_volume = 0;
 
     // The LFSR generates the random noise. It boots up filled with 1s.
     uint16_t m_lfsr = 0x7FFF;
