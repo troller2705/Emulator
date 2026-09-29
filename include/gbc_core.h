@@ -12,6 +12,9 @@ public:
 
     bool load_rom(const std::vector<uint8_t>& rom_data);
 
+    void load_battery(const std::string& path) { m_mmu.load_battery(path); }
+    void save_battery(const std::string& path) { m_mmu.save_battery(path); }
+
     PPU* get_ppu() { return m_mmu.get_ppu(); }
 
     // This is the function the Launcher calls 60 times a second

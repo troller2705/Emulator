@@ -51,11 +51,18 @@ int main(int argc, char* argv[]) {
         GB_WIDTH, GB_HEIGHT);
 
     GBCCore core;
-    std::vector<uint8_t> rom_data = load_file("D:/Emulator/ROMs/PokemonRed.gb");
+    // Store the paths here in the front-end
+    std::string rom_path = "D:/Emulator/ROMs/PokemonRed.gb";
+    std::string save_path = rom_path.substr(0, rom_path.find_last_of('.')) + ".sav";
+
+    std::vector<uint8_t> rom_data = load_file(rom_path);
     if (rom_data.empty() || !core.load_rom(rom_data)) {
         std::cerr << "Failed to load ROM into core!\n";
         return -1;
     }
+
+    // Load the save file immediately after loading the ROM
+    core.load_battery(save_path);
 
     bool is_running = true;
     SDL_Event event;
@@ -133,6 +140,10 @@ int main(int argc, char* argv[]) {
             SDL_Delay(FRAME_DELAY - frame_time); // Sleep to lock at 60 FPS
         }
     }
+
+    // THE LOOP FINISHED (User closed the window)
+    // Save the battery RAM to disk before destroying the core
+    core.save_battery(save_path);
 
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

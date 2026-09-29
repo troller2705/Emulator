@@ -1,6 +1,9 @@
 #include "mmu.h"
+#include <fstream>
 #include <iostream>
 #include <cstdlib>
+
+#include "timer.h"
 
 MMU::MMU() {
     m_vram.fill(0);
@@ -12,6 +15,28 @@ MMU::MMU() {
 
 void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
     m_rom = rom_data;
+}
+
+void MMU::load_battery(const std::string& save_path) {
+    std::ifstream file(save_path, std::ios::binary);
+    if (file.is_open()) {
+        // Read directly into the SRAM array
+        file.read(reinterpret_cast<char*>(m_sram.data()), m_sram.size());
+        std::cout << "Loaded save file: " << save_path << "\n";
+    } else {
+        std::cout << "No existing save file found. Starting fresh.\n";
+    }
+}
+
+void MMU::save_battery(const std::string& save_path) {
+    std::ofstream file(save_path, std::ios::binary);
+    if (file.is_open()) {
+        // Write the entire SRAM array to disk
+        file.write(reinterpret_cast<const char*>(m_sram.data()), m_sram.size());
+        std::cout << "Saved game to: " << save_path << "\n";
+    } else {
+        std::cerr << "Failed to create save file!\n";
+    }
 }
 
 uint8_t MMU::read(uint16_t address) {
@@ -30,6 +55,10 @@ uint8_t MMU::read(uint16_t address) {
     if (address >= 0xFF40 && address <= 0xFF4B) {
         return m_ppu.read_register(address);
     }
+    if (address == 0xFF04) return m_div;
+    if (address == 0xFF05) return m_tima;
+    if (address == 0xFF06) return m_tma;
+    if (address == 0xFF07) return m_tac;
     if (address <= 0x3FFF) {
         // ROM Bank 00 (Fixed - Always points to the start of the ROM)
         if (address < m_rom.size()) {
@@ -85,6 +114,19 @@ void MMU::write(uint16_t address, uint8_t value) {
     }
     if (address == 0xFF0F) { m_if = value; return; }
     if (address == 0xFFFF) { m_ie = value; return; }
+    if (address == 0xFF04) {
+        // Writing ANY value to DIV resets it to 0.
+        if (m_timer != nullptr) {
+            m_timer->reset_div();
+        }
+        m_div = 0;
+        return;
+    }
+
+    // Route the rest of the Timer registers
+    if (address == 0xFF05) { m_tima = value; return; }
+    if (address == 0xFF06) { m_tma = value; return; }
+    if (address == 0xFF07) { m_tac = value; return; }
     if (address == 0xFF46) {
         // Start DMA transfer from source address (value * 0x100) to OAM (0xFE00)
         uint16_t source_base = static_cast<uint16_t>(value) << 8;
