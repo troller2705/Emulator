@@ -17,6 +17,10 @@ public:
     virtual uint8_t debug_read_memory(uint16_t address) = 0;
     virtual void debug_write_memory(uint16_t address, uint8_t value) = 0;
 
+    // Inside IEmulatorCore
+    virtual void debug_update_tile_buffer() = 0;
+    virtual const uint32_t* debug_get_tile_buffer() const = 0;
+
     // A virtual destructor ensures derived hardware cores clean up their specific memory
     virtual ~IEmulatorCore() = default;
 

@@ -57,6 +57,10 @@ int main(int argc, char* argv[]) {
         SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
         GB_WIDTH, GB_HEIGHT);
 
+    SDL_Texture* tile_texture = SDL_CreateTexture(renderer,
+        SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+        128, 192); // 16 tiles wide, 24 tiles high
+
     // --- IMGUI SETUP ---
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -220,6 +224,21 @@ int main(int argc, char* argv[]) {
             mem_edit.DrawWindow("Memory Hex Editor", core.get(), 0x10000);
         }
 
+        // --- VRAM TILE VIEWER ---
+        ImGui::Begin("VRAM Tile Viewer");
+
+        // Only decode and update if the window is actually visible
+        if (ImGui::IsWindowAppearing() || ImGui::IsWindowFocused() || ImGui::IsWindowHovered()) {
+            core->debug_update_tile_buffer();
+            SDL_UpdateTexture(tile_texture, nullptr, core->debug_get_tile_buffer(), 128 * sizeof(uint32_t));
+        }
+
+        // Draw the texture in ImGui. Scale it up by 2 for readability (256x384)
+        // With the SDL2_Renderer backend, we cast the SDL_Texture pointer to ImTextureID
+        ImGui::Image((ImTextureID)(intptr_t)tile_texture, ImVec2(256.0f, 384.0f));
+
+        ImGui::End();
+
         // --- CORE EMULATION ---
         core->set_input(current_input);
 
@@ -263,6 +282,7 @@ int main(int argc, char* argv[]) {
         SDL_CloseAudioDevice(audio_device);
     }
 
+    SDL_DestroyTexture(tile_texture);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

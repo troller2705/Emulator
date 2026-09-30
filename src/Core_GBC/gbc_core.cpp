@@ -111,3 +111,42 @@ uint8_t GBCCore::debug_read_memory(uint16_t address) {
 void GBCCore::debug_write_memory(uint16_t address, uint8_t value) {
     m_mmu.write(address, value);
 }
+
+void GBCCore::debug_update_tile_buffer() {
+    // Standard grayscale palette (White, Light Gray, Dark Gray, Black)
+    const uint32_t palette[4] = { 0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000 };
+
+    // The Game Boy has 384 tiles total across blocks 0, 1, and 2
+    for (int tile = 0; tile < 384; tile++) {
+        // Calculate where this tile sits on our 16x24 ImGui grid
+        int tile_x = (tile % 16) * 8;
+        int tile_y = (tile / 16) * 8;
+
+        // Each tile is 16 bytes (2 bytes per row * 8 rows)
+        for (int row = 0; row < 8; row++) {
+            uint16_t address = 0x8000 + (tile * 16) + (row * 2);
+
+            // Read the two bytes that make up this 8-pixel row
+            uint8_t byte1 = debug_read_memory(address);     // Lower bit
+            uint8_t byte2 = debug_read_memory(address + 1); // Upper bit
+
+            for (int col = 0; col < 8; col++) {
+                // The leftmost pixel is bit 7, the rightmost is bit 0
+                int bit_index = 7 - col;
+
+                uint8_t bit1 = (byte1 >> bit_index) & 0x01;
+                uint8_t bit2 = (byte2 >> bit_index) & 0x01;
+
+                // Combine the bits to get the 2-bit color index (0-3)
+                uint8_t color_idx = (bit2 << 1) | bit1;
+
+                // Write the ARGB color to the flattened 1D buffer
+                m_debug_tile_buffer[(tile_y + row) * 128 + (tile_x + col)] = palette[color_idx];
+            }
+        }
+    }
+}
+
+const uint32_t* GBCCore::debug_get_tile_buffer() const {
+    return m_debug_tile_buffer.data();
+}

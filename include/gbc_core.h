@@ -15,6 +15,8 @@ private:
 
     std::string m_current_save_path;
 
+    std::array<uint32_t, 128 * 192> m_debug_tile_buffer{};
+
 public:
     GBCCore();
     ~GBCCore() override; // Declare destructor here, implement in .cpp
@@ -42,4 +44,7 @@ public:
 
     uint8_t debug_read_memory(uint16_t address) override;
     void debug_write_memory(uint16_t address, uint8_t value) override;
+
+    void debug_update_tile_buffer() override;
+    const uint32_t* debug_get_tile_buffer() const override;
 };
