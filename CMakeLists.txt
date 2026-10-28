@@ -1,15 +1,24 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.15)
 project(AllInOneEmulator)
 
-# Use C++17 standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find dependencies
+option(BUILD_STATIC_EXE "Bundle all libraries into a single standalone executable" OFF)
+
+if(BUILD_STATIC_EXE)
+    if(MSVC)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    elseif(MINGW)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+    elseif(UNIX AND NOT APPLE)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
+    endif()
+endif()
+
 find_package(SDL2 REQUIRED CONFIG)
 find_package(imgui CONFIG REQUIRED)
 
-# Define the source files
 set(SOURCES
         src/Launcher/main.cpp
         src/Core_GBC/gbc_core.cpp
@@ -18,20 +27,18 @@ set(SOURCES
         src/Core_GBC/ppu.cpp
         src/Core_GBC/timer.cpp
         src/Core_GBC/apu.cpp
+        src/Core_GBA/gba_core.cpp
         src/imgui/imgui_impl_sdl2.cpp
         src/imgui/imgui_impl_sdlrenderer2.cpp
 )
 
-# Create the executable
 add_executable(EmulatorLauncher ${SOURCES})
 
-# Tell CMake where to find our public headers for THIS target specifically
 target_include_directories(EmulatorLauncher PRIVATE include)
 
-# Link libraries to the target
 target_link_libraries(EmulatorLauncher
         PRIVATE
         $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
-        $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+        $<IF:$<TARGET_EXISTS:SDL2::SDL2-static>,SDL2::SDL2-static,SDL2::SDL2>
         imgui::imgui
 )

@@ -12,6 +12,8 @@
 
 // --- IMGUI HEADERS ---
 #include <imgui.h>
+
+#include "gba_core.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "imgui_memory_editor.h"
@@ -39,15 +41,15 @@ std::vector<uint8_t> load_file(const std::string& filepath) {
 enum class CoreType {
     AutoDetect = 0,
     GB_GBC,
-    // Add future cores here (e.g., NES, GBA, SNES)
+    GBA
 };
 
 const char* CORE_NAMES[] = {
     "Auto-Detect (By Extension)",
-    "Game Boy / Game Boy Color (GBCCore)"
+    "Game Boy / Game Boy Color (GBCCore)",
+    "Game Boy Advance (GBACore)"
 };
 
-// Helper to scan ROMs directory
 std::vector<fs::path> scan_rom_directory(const std::string& dir_path) {
     std::vector<fs::path> roms;
     std::error_code ec;
@@ -59,7 +61,7 @@ std::vector<fs::path> scan_rom_directory(const std::string& dir_path) {
         if (entry.is_regular_file()) {
             std::string ext = entry.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext == ".gb" || ext == ".gbc") {
+            if (ext == ".gb" || ext == ".gbc" || ext == ".gba") {
                 roms.push_back(entry.path());
             }
         }
@@ -153,8 +155,10 @@ int main(int argc, char* argv[]) {
     };
 
     // Helper Lambda to Instantiate Core & Load ROM
+    int current_tex_w = GB_WIDTH;
+    int current_tex_h = GB_HEIGHT;
+
     auto launch_rom = [&](const std::string& path, CoreType core_choice) {
-        // Save battery of currently running ROM before switching
         if (core && !current_save_path.empty()) {
             core->save_battery(current_save_path);
         }
@@ -173,14 +177,30 @@ int main(int argc, char* argv[]) {
         if (core_choice == CoreType::AutoDetect) {
             if (ext == ".gb" || ext == ".gbc") {
                 new_core = std::make_unique<GBCCore>();
+            } else if (ext == ".gba") {
+                new_core = std::make_unique<GBACore>();
             }
         } else if (core_choice == CoreType::GB_GBC) {
             new_core = std::make_unique<GBCCore>();
+        } else if (core_choice == CoreType::GBA) {
+            new_core = std::make_unique<GBACore>();
         }
 
         if (!new_core || !new_core->load_rom(rom_data)) {
             std::cerr << "Failed to initialize core for ROM: " << path << "\n";
             return false;
+        }
+
+        // Resize the streaming SDL_Texture if the new core has a different resolution
+        int new_w = new_core->get_video_width();
+        int new_h = new_core->get_video_height();
+        if (new_w != current_tex_w || new_h != current_tex_h) {
+            SDL_DestroyTexture(texture);
+            texture = SDL_CreateTexture(renderer,
+                SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                new_w, new_h);
+            current_tex_w = new_w;
+            current_tex_h = new_h;
         }
 
         current_rom_path = path;
@@ -189,7 +209,7 @@ int main(int argc, char* argv[]) {
 
         core = std::move(new_core);
         is_paused = false;
-        show_launcher = false; // Hide launcher once game starts
+        show_launcher = false;
         return true;
     };
 
@@ -402,7 +422,7 @@ int main(int argc, char* argv[]) {
                 SDL_QueueAudio(audio_device, core->get_audio_buffer(), sample_count * sizeof(float));
             }
 
-            SDL_UpdateTexture(texture, nullptr, core->get_video_buffer(), GB_WIDTH * sizeof(uint32_t));
+            SDL_UpdateTexture(texture, nullptr, core->get_video_buffer(), current_tex_w * sizeof(uint32_t));
         }
 
         // --- GRAPHICS RENDERING ---
