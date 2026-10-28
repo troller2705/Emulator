@@ -1,0 +1,97 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug",
+      "description": "Standard Debug build for CLion / Visual Studio",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_STATIC_EXE": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-release-single-exe",
+      "displayName": "Windows Release",
+      "description": "Statically links runtime and libraries into a standalone .exe",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-release-static",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_STATIC_EXE": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "description": "Standard Debug build on Linux",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-debug-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_STATIC_EXE": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-release-single-exe",
+      "displayName": "Linux Release",
+      "description": "Statically links C++ runtime and vcpkg archives into a single Linux binary",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-release-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_STATIC_EXE": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "displayName": "Build Windows Debug"
+    },
+    {
+      "name": "windows-release-single-exe",
+      "configurePreset": "windows-release-single-exe",
+      "displayName": "Build Windows Single Exe"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "displayName": "Build Linux Debug"
+    },
+    {
+      "name": "linux-release-single-exe",
+      "configurePreset": "linux-release-single-exe",
+      "displayName": "Build Linux Single Exe"
+    }
+  ]
+}

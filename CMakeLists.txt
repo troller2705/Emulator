@@ -1,20 +1,22 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.10)
+
+# Fallback vcpkg toolchain detection if not provided by preset
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
+    if(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "" FORCE)
+    elseif(EXISTS "D:/.vcpkg-clion/vcpkg/scripts/buildsystems")
+        set(CMAKE_TOOLCHAIN_FILE "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "" FORCE)
+    elseif(EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "" FORCE)
+    endif()
+endif()
+
 project(AllInOneEmulator)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(BUILD_STATIC_EXE "Bundle all libraries into a single standalone executable" OFF)
-
-if(BUILD_STATIC_EXE)
-    if(MSVC)
-        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    elseif(MINGW)
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
-    elseif(UNIX AND NOT APPLE)
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
-    endif()
-endif()
+option(BUILD_STATIC_EXE "Statically bundle C++ runtime and libraries" OFF)
 
 find_package(SDL2 REQUIRED CONFIG)
 find_package(imgui CONFIG REQUIRED)
@@ -39,6 +41,15 @@ target_include_directories(EmulatorLauncher PRIVATE include)
 target_link_libraries(EmulatorLauncher
         PRIVATE
         $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
-        $<IF:$<TARGET_EXISTS:SDL2::SDL2-static>,SDL2::SDL2-static,SDL2::SDL2>
+        $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
         imgui::imgui
 )
+
+# If using dynamic SDL2.dll from cmake-build-debug, copy it to the output folder automatically
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/bin/SDL2.dll")
+    add_custom_command(TARGET EmulatorLauncher POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/bin/SDL2.dll"
+            "$<TARGET_FILE_DIR:EmulatorLauncher>/SDL2.dll"
+    )
+endif()

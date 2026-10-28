@@ -1,0 +1,14 @@
+# ninja log v7
+10	200406	8149072043524199	build.ninja	d4c43db9975482f9
+10	200406	8149072043467989	D:/Emulator/cmake-build-debug/cmake_install.cmake	d4c43db9975482f9
+51	556	8149071937069909	CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/apu.cpp.obj	e37c9c869f0d0cf7
+43	641	8149071936985985	CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/timer.cpp.obj	93161040e4260be7
+34	705	8149071936900855	CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/ppu.cpp.obj	1ce4e45b96e6de3
+80	717	8149071937358854	CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdlrenderer2.cpp.obj	84cd896ddc37f940
+14	1041	8149071936697446	CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_core.cpp.obj	4f5fa54e355eda8b
+27	1172	8149071936835222	CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/cpu.cpp.obj	91176f9f1f2ca379
+20	1305	8149071936759431	CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/mmu.cpp.obj	f000289028e5c8c8
+59	1406	8149071937157730	CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_core.cpp.obj	f435de1922ef1707
+70	1875	8149071937248698	CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdl2.cpp.obj	c6aba7a5fa79becd
+7	2729	8149071936630166	CMakeFiles/EmulatorLauncher.dir/src/Launcher/main.cpp.obj	dbcbc46e2d92e738
+2730	3188	8149071963856460	EmulatorLauncher.exe	b2c113571175a1b0
