@@ -63,6 +63,15 @@ private:
     void change_mode(uint8_t mode, MMU& mmu);
 
     void check_lyc(MMU& mmu);
+
+    // --- CGB Palette Memory ---
+    uint8_t m_bcps = 0; // 0xFF68 - Background Palette Index
+    uint8_t m_ocps = 0; // 0xFF6A - Sprite Palette Index
+
+    std::array<uint8_t, 64> m_bg_palette_ram{};
+    std::array<uint8_t, 64> m_sprite_palette_ram{};
+
+    uint32_t color_correct_rgb555(uint8_t byte1, uint8_t byte2);
 };
 
 #endif

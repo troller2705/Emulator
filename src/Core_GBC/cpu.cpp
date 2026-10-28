@@ -441,9 +441,17 @@ int CPU::clock_instruction() {
         }
 
         case 0X10: { // STOP n8
-            // STOP is technically a 2-byte instruction, so read and discard the 0x00
             m_mmu.read(PC++);
-            m_halted = true; // Acts similarly to HALT on a standard DMG
+
+            // --- CGB SPEED SWITCH ---
+            if (m_mmu.m_is_cgb && (m_mmu.m_key1 & 0x01)) {
+                // Toggle Bit 7 (Current Speed) and clear Bit 0 (Switch Prepared)
+                m_mmu.m_key1 = (m_mmu.m_key1 ^ 0x80) & 0xFE;
+            } else {
+                // Standard DMG Halt
+                m_halted = true;
+            }
+
             cycles = 4;
             break;
         }

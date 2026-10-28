@@ -6,17 +6,20 @@ GBCCore::GBCCore() : m_mmu(), m_cpu(m_mmu), m_timer(m_mmu) {
     m_mmu.link_timer(&m_timer);
 }
 
-// 2. Save SRAM to disk when the core shuts down
-GBCCore::~GBCCore() {
-    if (!m_current_save_path.empty()) {
-        m_mmu.save_battery(m_current_save_path);
-    }
-}
+GBCCore::~GBCCore() {}
 
 bool GBCCore::load_rom(const std::vector<uint8_t>& rom_data) {
     if (rom_data.size() < 0x0150) {
         std::cerr << "[Core] Invalid ROM size.\n";
         return false;
+    }
+
+    m_is_cgb = (rom_data[0x0143] == 0x80 || rom_data[0x0143] == 0xC0);
+
+    if (m_is_cgb) {
+        m_cpu.AF.high = 0x11;
+    } else {
+        m_cpu.AF.high = 0x01;
     }
 
     m_mmu.load_rom(rom_data);
@@ -52,13 +55,17 @@ void GBCCore::run_frame() {
 
     while (cycles_this_frame < CYCLES_PER_FRAME) {
         int cycles = m_cpu.clock_instruction();
-        m_timer.tick(cycles);
-        m_mmu.get_ppu()->step(cycles, m_mmu);
 
-        // Drive the audio processor
-        m_mmu.get_apu()->tick(cycles);
+        // --- CGB DOUBLE SPEED SCALING ---
+        // If KEY1 Bit 7 is set, hardware components experience half the cycles
+        int hardware_cycles = (m_mmu.m_key1 & 0x80) ? (cycles >> 1) : cycles;
 
-        cycles_this_frame += cycles;
+        m_timer.tick(hardware_cycles);
+        m_mmu.get_ppu()->step(hardware_cycles, m_mmu);
+        m_mmu.get_apu()->tick(hardware_cycles);
+
+        // Frame timing is based on physical hardware clocks, not CPU clocks
+        cycles_this_frame += hardware_cycles;
     }
 }
 
@@ -82,9 +89,13 @@ size_t GBCCore::get_audio_sample_count() const {
 
 void GBCCore::step_instruction() {
     int cycles = m_cpu.clock_instruction();
-    m_timer.tick(cycles);
-    m_mmu.get_ppu()->step(cycles, m_mmu);
-    m_mmu.get_apu()->tick(cycles);
+
+    // Scale cycles for debugging stepping as well
+    int hardware_cycles = (m_mmu.m_key1 & 0x80) ? (cycles >> 1) : cycles;
+
+    m_timer.tick(hardware_cycles);
+    m_mmu.get_ppu()->step(hardware_cycles, m_mmu);
+    m_mmu.get_apu()->tick(hardware_cycles);
 }
 
 CPUState GBCCore::get_cpu_state() const {

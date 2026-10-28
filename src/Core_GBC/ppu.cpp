@@ -26,6 +26,10 @@ uint8_t PPU::read_register(uint16_t address) const {
         case 0xFF49: return m_obp1;
         case 0xFF4A: return m_wy;
         case 0xFF4B: return m_wx;
+        case 0xFF68: return m_bcps | 0x40; // Bit 6 is always 1
+        case 0xFF69: return m_bg_palette_ram[m_bcps & 0x3F];
+        case 0xFF6A: return m_ocps | 0x40; // Bit 6 is always 1
+        case 0xFF6B: return m_sprite_palette_ram[m_ocps & 0x3F];
         default: return 0xFF;
     }
 }
@@ -62,6 +66,32 @@ void PPU::write_register(uint16_t address, uint8_t value) {
         case 0xFF49: m_obp1 = value; break;
         case 0xFF4A: m_wy = value; break;
         case 0xFF4B: m_wx = value; break;
+        case 0xFF68:
+            m_bcps = value;
+            break;
+        case 0xFF69: {
+            uint8_t index = m_bcps & 0x3F;
+            m_bg_palette_ram[index] = value;
+            // Auto-increment if Bit 7 is set
+            if (m_bcps & 0x80) {
+                uint8_t next_index = (index + 1) & 0x3F;
+                m_bcps = 0x80 | next_index;
+            }
+            break;
+        }
+        case 0xFF6A:
+            m_ocps = value;
+            break;
+        case 0xFF6B: {
+            uint8_t index = m_ocps & 0x3F;
+            m_sprite_palette_ram[index] = value;
+            // Auto-increment if Bit 7 is set
+            if (m_ocps & 0x80) {
+                uint8_t next_index = (index + 1) & 0x3F;
+                m_ocps = 0x80 | next_index;
+            }
+            break;
+        }
         default: break;
     }
 }
@@ -91,23 +121,38 @@ void PPU::render_scanline(MMU& mmu) {
     uint8_t scx = mmu.read(0xFF43);
     uint8_t bgp = mmu.read(0xFF47);
 
-    uint32_t colors[4] = {0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000};
+    const uint32_t dmg_colors[4] = {0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000};
 
-    // Track the BG color drawn at each pixel for sprite priority checks
+    // Track the BG color ID (0-3) drawn at each pixel for sprite priority checks
     uint8_t scanline_bg_colors[160] = {0};
 
-    // --- 1. RENDER BACKGROUND ---
-    if (is_bg_window_enabled()) {
+    // --- 1. RENDER BACKGROUND (DMG & CGB) ---
+    if (is_bg_window_enabled() || mmu.m_is_cgb) {
         uint8_t y = (m_ly + scy) & 0xFF;
         uint8_t tile_y = y / 8;
-        uint8_t pixel_y = y % 8;
+        uint8_t render_pixel_y = y % 8;
 
         for (int p_x = 0; p_x < 160; p_x++) {
             uint8_t x = (p_x + scx) & 0xFF;
             uint8_t tile_x = x / 8;
 
-            uint16_t tile_address = bg_map_base + (tile_y * 32) + tile_x;
-            uint8_t tile_id = mmu.read(tile_address);
+            uint16_t map_address = bg_map_base + (tile_y * 32) + tile_x;
+            uint8_t tile_id = mmu.read_vram(0, map_address);
+
+            uint8_t palette_num = 0;
+            uint8_t tile_bank   = 0;
+            bool x_flip         = false;
+            bool y_flip         = false;
+
+            if (mmu.m_is_cgb) {
+                uint8_t attributes = mmu.read_vram(1, map_address);
+                palette_num = attributes & 0x07;
+                tile_bank   = (attributes >> 3) & 0x01;
+                x_flip      = (attributes >> 5) & 0x01;
+                y_flip      = (attributes >> 6) & 0x01;
+            }
+
+            uint8_t active_pixel_y = y_flip ? (7 - render_pixel_y) : render_pixel_y;
 
             uint16_t tile_data_loc = tile_base;
             if (is_signed) {
@@ -117,47 +162,68 @@ void PPU::render_scanline(MMU& mmu) {
                 tile_data_loc += (tile_id * 16);
             }
 
-            uint8_t byte1 = mmu.read(tile_data_loc + (pixel_y * 2));
-            uint8_t byte2 = mmu.read(tile_data_loc + (pixel_y * 2) + 1);
+            uint8_t byte1 = mmu.read_vram(tile_bank, tile_data_loc + (active_pixel_y * 2));
+            uint8_t byte2 = mmu.read_vram(tile_bank, tile_data_loc + (active_pixel_y * 2) + 1);
 
-            int bit_index = 7 - (x % 8);
-            uint8_t color_bit1 = (byte1 >> bit_index) & 1;
-            uint8_t color_bit2 = (byte2 >> bit_index) & 1;
+            uint8_t active_pixel_x = x_flip ? (x % 8) : (7 - (x % 8));
+
+            uint8_t color_bit1 = (byte1 >> active_pixel_x) & 1;
+            uint8_t color_bit2 = (byte2 >> active_pixel_x) & 1;
             uint8_t color_id = (color_bit2 << 1) | color_bit1;
 
-            scanline_bg_colors[p_x] = color_id; // Save for sprites
-            uint8_t actual_color = (bgp >> (color_id * 2)) & 0x03;
-            m_framebuffer[m_ly * 160 + p_x] = colors[actual_color];
+            scanline_bg_colors[p_x] = color_id;
+
+            if (mmu.m_is_cgb) {
+                uint8_t color_address = (palette_num * 8) + (color_id * 2);
+                uint8_t pal_byte1 = m_bg_palette_ram[color_address];
+                uint8_t pal_byte2 = m_bg_palette_ram[color_address + 1];
+                m_framebuffer[m_ly * 160 + p_x] = color_correct_rgb555(pal_byte1, pal_byte2);
+            } else {
+                uint8_t shade = (bgp >> (color_id * 2)) & 0x03;
+                m_framebuffer[m_ly * 160 + p_x] = dmg_colors[shade];
+            }
         }
     } else {
         for (int p_x = 0; p_x < 160; p_x++) {
-            m_framebuffer[m_ly * 160 + p_x] = colors[0];
+            m_framebuffer[m_ly * 160 + p_x] = 0xFFFFFFFF;
             scanline_bg_colors[p_x] = 0;
         }
     }
 
-    // --- 2. RENDER WINDOW LAYER ---
-    if (is_window_enabled() && is_bg_window_enabled() && m_ly >= m_wy) {
-
-        // Use the internal counter instead of m_ly - m_wy
+    // --- 2. RENDER WINDOW LAYER (DMG & CGB) ---
+    if (is_window_enabled() && (is_bg_window_enabled() || mmu.m_is_cgb) && m_ly >= m_wy) {
         uint16_t win_map_base = get_window_tile_map_address();
         uint8_t win_y = m_window_line;
-
         uint8_t tile_y = win_y / 8;
-        uint8_t pixel_y = win_y % 8;
+        uint8_t render_pixel_y = win_y % 8;
 
         bool window_drawn_on_scanline = false;
 
         for (int p_x = 0; p_x < 160; p_x++) {
             if (p_x < m_wx - 7) continue;
 
-            window_drawn_on_scanline = true; // We successfully drew at least one pixel
+            window_drawn_on_scanline = true;
 
             uint8_t win_x = p_x - (m_wx - 7);
             uint8_t tile_x = win_x / 8;
 
-            uint16_t tile_address = win_map_base + (tile_y * 32) + tile_x;
-            uint8_t tile_id = mmu.read(tile_address);
+            uint16_t map_address = win_map_base + (tile_y * 32) + tile_x;
+            uint8_t tile_id = mmu.read_vram(0, map_address);
+
+            uint8_t palette_num = 0;
+            uint8_t tile_bank   = 0;
+            bool x_flip         = false;
+            bool y_flip         = false;
+
+            if (mmu.m_is_cgb) {
+                uint8_t attributes = mmu.read_vram(1, map_address);
+                palette_num = attributes & 0x07;
+                tile_bank   = (attributes >> 3) & 0x01;
+                x_flip      = (attributes >> 5) & 0x01;
+                y_flip      = (attributes >> 6) & 0x01;
+            }
+
+            uint8_t active_pixel_y = y_flip ? (7 - render_pixel_y) : render_pixel_y;
 
             uint16_t tile_data_loc = tile_base;
             if (is_signed) {
@@ -167,32 +233,39 @@ void PPU::render_scanline(MMU& mmu) {
                 tile_data_loc += (tile_id * 16);
             }
 
-            uint8_t byte1 = mmu.read(tile_data_loc + (pixel_y * 2));
-            uint8_t byte2 = mmu.read(tile_data_loc + (pixel_y * 2) + 1);
+            uint8_t byte1 = mmu.read_vram(tile_bank, tile_data_loc + (active_pixel_y * 2));
+            uint8_t byte2 = mmu.read_vram(tile_bank, tile_data_loc + (active_pixel_y * 2) + 1);
 
-            int bit_index = 7 - (win_x % 8);
-            uint8_t color_bit1 = (byte1 >> bit_index) & 1;
-            uint8_t color_bit2 = (byte2 >> bit_index) & 1;
+            uint8_t active_pixel_x = x_flip ? (win_x % 8) : (7 - (win_x % 8));
+
+            uint8_t color_bit1 = (byte1 >> active_pixel_x) & 1;
+            uint8_t color_bit2 = (byte2 >> active_pixel_x) & 1;
             uint8_t color_id = (color_bit2 << 1) | color_bit1;
 
             scanline_bg_colors[p_x] = color_id;
-            uint8_t actual_color = (bgp >> (color_id * 2)) & 0x03;
-            m_framebuffer[m_ly * 160 + p_x] = colors[actual_color];
+
+            if (mmu.m_is_cgb) {
+                uint8_t color_address = (palette_num * 8) + (color_id * 2);
+                uint8_t pal_byte1 = m_bg_palette_ram[color_address];
+                uint8_t pal_byte2 = m_bg_palette_ram[color_address + 1];
+                m_framebuffer[m_ly * 160 + p_x] = color_correct_rgb555(pal_byte1, pal_byte2);
+            } else {
+                uint8_t shade = (bgp >> (color_id * 2)) & 0x03;
+                m_framebuffer[m_ly * 160 + p_x] = dmg_colors[shade];
+            }
         }
 
-        // Only increment the internal counter if the window was actually visible
         if (window_drawn_on_scanline) {
             m_window_line++;
         }
     }
 
-    // --- 3. RENDER SPRITES (OAM) ---
+    // --- 3. RENDER SPRITES (OAM) (DMG & CGB) ---
     if (!are_sprites_enabled()) return;
 
     bool tall_sprites = get_sprite_height() == 16;
     int sprite_height = tall_sprites ? 16 : 8;
 
-    // Draw backwards (39 to 0) so earlier sprites draw on top
     for (int i = 39; i >= 0; i--) {
         uint16_t oam_addr = 0xFE00 + (i * 4);
         int sprite_y = mmu.read(oam_addr) - 16;
@@ -204,12 +277,13 @@ void PPU::render_scanline(MMU& mmu) {
             continue;
         }
 
-        bool bg_priority = (attributes & 0x80) != 0; // Bit 7!
+        bool bg_priority = (attributes & 0x80) != 0;
         bool y_flip      = (attributes & 0x40) != 0;
         bool x_flip      = (attributes & 0x20) != 0;
         bool use_obp1    = (attributes & 0x10) != 0;
 
-        uint8_t obp = mmu.read(use_obp1 ? 0xFF49 : 0xFF48);
+        uint8_t cgb_palette = attributes & 0x07;
+        uint8_t tile_bank   = mmu.m_is_cgb ? ((attributes >> 3) & 0x01) : 0;
 
         int line = m_ly - sprite_y;
         if (y_flip) {
@@ -226,8 +300,10 @@ void PPU::render_scanline(MMU& mmu) {
         }
 
         uint16_t tile_data_loc = 0x8000 + (tile_index * 16);
-        uint8_t byte1 = mmu.read(tile_data_loc + (line * 2));
-        uint8_t byte2 = mmu.read(tile_data_loc + (line * 2) + 1);
+        uint8_t byte1 = mmu.read_vram(tile_bank, tile_data_loc + (line * 2));
+        uint8_t byte2 = mmu.read_vram(tile_bank, tile_data_loc + (line * 2) + 1);
+
+        uint8_t obp = mmu.read(use_obp1 ? 0xFF49 : 0xFF48);
 
         for (int x = 0; x < 8; x++) {
             int px = sprite_x + x;
@@ -240,11 +316,17 @@ void PPU::render_scanline(MMU& mmu) {
 
             if (color_id == 0) continue; // Transparent pixel
 
-            // PRIORITY CHECK: If Bit 7 is set, sprite hides behind non-white BG pixels
             if (bg_priority && scanline_bg_colors[px] != 0) continue;
 
-            uint8_t actual_color = (obp >> (color_id * 2)) & 0x03;
-            m_framebuffer[m_ly * 160 + px] = colors[actual_color];
+            if (mmu.m_is_cgb) {
+                uint8_t color_address = (cgb_palette * 8) + (color_id * 2);
+                uint8_t pal_byte1 = m_sprite_palette_ram[color_address];
+                uint8_t pal_byte2 = m_sprite_palette_ram[color_address + 1];
+                m_framebuffer[m_ly * 160 + px] = color_correct_rgb555(pal_byte1, pal_byte2);
+            } else {
+                uint8_t shade = (obp >> (color_id * 2)) & 0x03;
+                m_framebuffer[m_ly * 160 + px] = dmg_colors[shade];
+            }
         }
     }
 }
@@ -262,12 +344,30 @@ void PPU::step(int cycles, MMU& mmu) {
     }
 
     m_scanline_counter -= cycles;
+
+    // --- THE MISSING STAT MODE STATE MACHINE ---
+    // The PPU must cycle through Mode 2, Mode 3, and Mode 0 during visible lines.
+    // Crystal relies on Mode 0 (H-Blank) to safely push graphics to VRAM.
+    if (m_ly < 144) {
+        if (m_scanline_counter >= 376) {
+            // Mode 2: OAM Search (First 80 cycles)
+            if ((m_stat & 0x03) != 2) change_mode(2, mmu);
+        } else if (m_scanline_counter >= 204) {
+            // Mode 3: Pixel Transfer (Next ~172 cycles)
+            if ((m_stat & 0x03) != 3) change_mode(3, mmu);
+        } else {
+            // Mode 0: H-Blank (Remaining ~204 cycles)
+            if ((m_stat & 0x03) != 0) change_mode(0, mmu);
+        }
+    }
+
     if (m_scanline_counter <= 0) {
         m_scanline_counter += 456;
 
-        // Call our new render function!
+        // Render the line right as H-Blank concludes
         if (m_ly < 144) {
             render_scanline(mmu);
+            mmu.step_hdma();
         }
 
         m_ly++;
@@ -276,22 +376,20 @@ void PPU::step(int cycles, MMU& mmu) {
             change_mode(1, mmu); // VBlank
             frame_ready = true;
 
-            // --- NEW: Request VBlank Interrupt! ---
+            // Request VBlank Interrupt
             uint8_t current_if = mmu.read(0xFF0F);
-            mmu.write(0xFF0F, current_if | 0x01); // Set bit 0
+            mmu.write(0xFF0F, current_if | 0x01);
 
         } else if (m_ly > 153) {
             m_ly = 0; // Restart frame
-            m_window_line = 0; // Reset internal window counter!
+            m_window_line = 0;
         }
 
         // --- LY == LYC Check & Interrupt ---
         if (m_ly == m_lyc) {
-            m_stat |= 0x04; // Set LY Coincidence Flag (Bit 2)
-
-            // Check if the game explicitly requested an LYC interrupt (Bit 6 of STAT)
+            m_stat |= 0x04; // Set LY Coincidence Flag
             if (m_stat & (1 << 6)) {
-                // Request STAT Interrupt (Bit 1 of IF) to wake the CPU!
+                // Request STAT Interrupt
                 uint8_t current_if = mmu.read(0xFF0F);
                 mmu.write(0xFF0F, current_if | 0x02);
             }
@@ -313,4 +411,19 @@ void PPU::check_lyc(MMU& mmu) {
     } else {
         m_stat &= ~0x04; // Clear the LY Coincidence Flag
     }
+}
+
+uint32_t PPU::color_correct_rgb555(uint8_t byte1, uint8_t byte2) {
+    uint16_t rgb555 = byte1 | (byte2 << 8);
+
+    uint8_t r = (rgb555 & 0x001F);
+    uint8_t g = (rgb555 & 0x03E0) >> 5;
+    uint8_t b = (rgb555 & 0x7C00) >> 10;
+
+    // Scale 5-bit (0-31) to 8-bit (0-255)
+    uint8_t r8 = (r << 3) | (r >> 2);
+    uint8_t g8 = (g << 3) | (g >> 2);
+    uint8_t b8 = (b << 3) | (b >> 2);
+
+    return 0xFF000000 | (r8 << 16) | (g8 << 8) | b8;
 }

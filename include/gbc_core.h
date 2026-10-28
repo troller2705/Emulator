@@ -22,6 +22,7 @@ public:
     ~GBCCore() override; // Declare destructor here, implement in .cpp
 
     bool load_rom(const std::vector<uint8_t>& rom_data) override;
+    bool m_is_cgb;
     void reset() override {} // Stub for now
     void run_frame() override;
 

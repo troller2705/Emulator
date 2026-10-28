@@ -10,14 +10,22 @@
 #include "timer.h"
 
 MMU::MMU() {
-    m_vram.fill(0);
-    m_wram.fill(0);
+    for (auto& bank : m_vram) {
+        bank.fill(0);
+    }
+    for (auto& bank : m_wram) {
+        bank.fill(0);
+    }
     m_hram.fill(0);
     m_oam.fill(0);
 }
 
 void MMU::load_rom(const std::vector<uint8_t>& rom_data) {
     if (rom_data.size() < 0x0150) return;
+
+    // Check if the game supports or requires CGB
+    uint8_t cgb_flag = rom_data[0x0143];
+    m_is_cgb = (cgb_flag == 0x80 || cgb_flag == 0xC0);
 
     // Parse the RAM size byte from the cartridge header
     size_t ram_size = 0;
@@ -100,20 +108,37 @@ uint8_t MMU::read(uint16_t address) {
     if (address == 0xFF0F) return m_if | 0xE0;
     if (address == 0xFFFF) return m_ie;
 
-    if (address >= 0xFF40 && address <= 0xFF4B) {
+    if ((address >= 0xFF40 && address <= 0xFF4B) || (address >= 0xFF68 && address <= 0xFF6B)) {
         return m_ppu.read_register(address);
     }
+
+    if (address >= 0xFF51 && address <= 0xFF54) return 0xFF; // These registers are write-only
+    if (address == 0xFF55) return m_hdma5;
 
     if (address >= 0xFF04 && address <= 0xFF07) {
         return m_timer ? m_timer->read_register(address) : 0xFF;
     }
 
     if (address >= 0x8000 && address <= 0x9FFF) {
-        return m_vram[address - 0x8000];
+        uint8_t bank = m_vbk & 0x01;
+        return m_vram[bank][address - 0x8000];
     }
-    if (address >= 0xC000 && address <= 0xDFFF) {
-        return m_wram[address - 0xC000];
+
+    // Read VBK Register
+    if (address == 0xFF4F) return m_vbk | 0xFE; // Top 7 bits are always 1
+
+    if (address >= 0xC000 && address <= 0xCFFF) {
+        return m_wram[0][address - 0xC000];
     }
+    if (address >= 0xD000 && address <= 0xDFFF) {
+        uint8_t bank = m_svbk & 0x07;
+        if (bank == 0) bank = 1;
+        return m_wram[bank][address - 0xD000];
+    }
+
+    // Read SVBK Register
+    if (address == 0xFF70) return m_svbk | 0xF8; // Top 5 bits are always 1
+
     if (address >= 0xFF80 && address <= 0xFFFE) {
         return m_hram[address - 0xFF80];
     }
@@ -123,6 +148,8 @@ uint8_t MMU::read(uint16_t address) {
     if (address >= 0xFF10 && address <= 0xFF3F) {
         return m_apu.read_register(address);
     }
+
+    if (address == 0xFF4D) return m_key1 | 0x7E;
 
     return 0xFF;
 }
@@ -157,25 +184,97 @@ void MMU::write(uint16_t address, uint8_t value) {
         return;
     }
 
-    if (address >= 0xFF40 && address <= 0xFF4B) {
+    if ((address >= 0xFF40 && address <= 0xFF4B) || (address >= 0xFF68 && address <= 0xFF6B)) {
         m_ppu.write_register(address, value);
         return;
     }
+
     if (address >= 0xFF10 && address <= 0xFF3F) {
         m_apu.write_register(address, value);
         return;
     }
 
     if (address >= 0x8000 && address <= 0x9FFF) {
-        m_vram[address - 0x8000] = value;
+        uint8_t bank = m_vbk & 0x01;
+        m_vram[bank][address - 0x8000] = value;
+        return;
     }
-    else if (address >= 0xC000 && address <= 0xDFFF) {
-        m_wram[address - 0xC000] = value;
+
+    // Write VBK Register
+    if (address == 0xFF4F) {
+        if (m_is_cgb) m_vbk = value & 0x01;
+        return;
     }
-    else if (address >= 0xFF80 && address <= 0xFFFE) {
+
+    if (address == 0xFF4D) {
+        // Bit 7 is hardware read-only. We only allow the game to change Bit 0.
+        m_key1 = (m_key1 & 0x80) | (value & 0x01);
+        return;
+    }
+
+    if (address >= 0xC000 && address <= 0xCFFF) {
+        m_wram[0][address - 0xC000] = value;
+        return;
+    }
+    if (address >= 0xD000 && address <= 0xDFFF) {
+        uint8_t bank = m_svbk & 0x07;
+        if (bank == 0) bank = 1;
+        m_wram[bank][address - 0xD000] = value;
+        return;
+    }
+
+    // 0xFF51: HDMA1 (Source High)
+    if (address == 0xFF51) {
+        m_hdma_src = (m_hdma_src & 0x00FF) | (value << 8);
+        return;
+    }
+    // 0xFF52: HDMA2 (Source Low) - Lower 4 bits are hardware-masked to 0
+    if (address == 0xFF52) {
+        m_hdma_src = (m_hdma_src & 0xFF00) | (value & 0xF0);
+        return;
+    }
+    // 0xFF53: HDMA3 (Dest High) - Upper 3 bits are ignored, mapped strictly to VRAM (0x8000)
+    if (address == 0xFF53) {
+        m_hdma_dst = (m_hdma_dst & 0x00FF) | (((value & 0x1F) << 8) | 0x8000);
+        return;
+    }
+    // 0xFF54: HDMA4 (Dest Low) - Lower 4 bits are hardware-masked to 0
+    if (address == 0xFF54) {
+        m_hdma_dst = (m_hdma_dst & 0xFF00) | (value & 0xF0);
+        return;
+    }
+    // 0xFF55: HDMA5 (Length/Mode/Start)
+    if (address == 0xFF55) {
+        bool is_hdma = (value & 0x80) != 0;
+        uint8_t length_blocks = (value & 0x7F) + 1; // Length is expressed in 16-byte blocks
+        uint16_t transfer_length = length_blocks * 16;
+
+        if (m_hdma_active && !is_hdma) {
+            // Writing a 0 to bit 7 while an HDMA is active cancels it.
+            m_hdma_active = false;
+            m_hdma5 = (m_hdma5 & 0x7F) | 0x80; // Set bit 7 to 1 to indicate stopped state
+        } else if (is_hdma) {
+            // Bit 7 is 1: Start H-Blank DMA
+            m_hdma5 = value & 0x7F; // Clear bit 7 to indicate active
+            m_hdma_active = true;
+        } else {
+            // Bit 7 is 0: Start General DMA (Immediate transfer)
+            perform_dma_copy(transfer_length);
+            m_hdma5 = 0xFF; // Transfer completes instantly
+            m_hdma_active = false;
+        }
+        return;
+    }
+
+    // Write SVBK Register
+    if (address == 0xFF70) {
+        if (m_is_cgb) m_svbk = value & 0x07;
+        return;
+    }
+    if (address >= 0xFF80 && address <= 0xFFFE) {
         m_hram[address - 0xFF80] = value;
     }
-    else if (address >= 0xFE00 && address <= 0xFE9F) {
+    if (address >= 0xFE00 && address <= 0xFE9F) {
         m_oam[address - 0xFE00] = value;
     }
 }
@@ -193,5 +292,33 @@ void MMU::set_joypad_state(uint8_t new_state) {
 
     if (request_interrupt) {
         m_if |= 0x10;
+    }
+}
+
+void MMU::perform_dma_copy(uint16_t length) {
+    for (uint16_t i = 0; i < length; i++) {
+        uint8_t byte = read(m_hdma_src);
+        write(m_hdma_dst, byte);
+        m_hdma_src++;
+        m_hdma_dst++;
+    }
+}
+
+void MMU::step_hdma() {
+    if (!m_hdma_active) return;
+
+    // HDMA transfers exactly 16 bytes per H-Blank
+    perform_dma_copy(16);
+
+    // Decrement the length (lower 7 bits of HDMA5)
+    uint8_t blocks_remaining = m_hdma5 & 0x7F;
+
+    if (blocks_remaining == 0) {
+        // Transfer complete: mark inactive and set HDMA5 to 0xFF
+        m_hdma_active = false;
+        m_hdma5 = 0xFF;
+    } else {
+        // Update HDMA5 with the new decremented block count
+        m_hdma5 = (m_hdma5 & 0x80) | (blocks_remaining - 1);
     }
 }
