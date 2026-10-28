@@ -68,3 +68,4 @@ Testing/
 .cache/
 
 ROMs/
+!ROMs/put_roms_here.txt
