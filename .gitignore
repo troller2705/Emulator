@@ -67,5 +67,5 @@ vcpkg_installed/
 Testing/
 .cache/
 
-ROMs/
+ROMs/*
 !ROMs/put_roms_here.txt
