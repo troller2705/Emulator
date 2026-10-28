@@ -1,5 +1,5 @@
-#include "timer.h"
-#include "mmu.h"
+#include "../../include/Core_GBC/gbc_timer.h"
+#include "../../include/Core_GBC/gbc_mmu.h"
 
 Timer::Timer(MMU& mmu) : m_mmu(mmu) {}
 

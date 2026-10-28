@@ -1,5 +1,5 @@
 #pragma once
-#include "ICartridge.h"
+#include "../Core_Shared/ICartridge.h"
 #include <vector>
 
 class MBC3 : public ICartridge {

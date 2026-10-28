@@ -1,4 +1,4 @@
-#include "gbc_core.h"
+#include "../../include/Core_GBC/gbc_core.h"
 #include <iostream>
 
 // 1. Initialize components and link the timer immediately

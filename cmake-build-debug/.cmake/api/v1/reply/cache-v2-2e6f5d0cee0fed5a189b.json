@@ -43,10 +43,10 @@
 			[
 				{
 					"name" : "HELPSTRING",
-					"value" : "Statically bundle C++ runtime and libraries"
+					"value" : "No help, variable specified on the command line."
 				}
 			],
-			"type" : "BOOL",
+			"type" : "UNINITIALIZED",
 			"value" : "OFF"
 		},
 		{

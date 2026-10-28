@@ -3,7 +3,10 @@
 	"artifacts" : 
 	[
 		{
-			"path" : "vcpkg_installed/x64-mingw-dynamic/debug/lib/libimguid.a"
+			"path" : "vcpkg_installed/x64-mingw-dynamic/debug/bin/SDL2d.dll"
+		},
+		{
+			"path" : "vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2d.dll.a"
 		}
 	],
 	"backtrace" : 7,
@@ -20,8 +23,8 @@
 		"files" : 
 		[
 			"D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake",
-			"cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/share/imgui/imgui-targets.cmake",
-			"cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/share/imgui/imgui-config.cmake",
+			"cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/share/sdl2/SDL2Targets.cmake",
+			"cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/share/sdl2/SDL2Config.cmake",
 			"CMakeLists.txt"
 		],
 		"nodes" : 
@@ -32,7 +35,7 @@
 			{
 				"command" : 4,
 				"file" : 3,
-				"line" : 22,
+				"line" : 19,
 				"parent" : 0
 			},
 			{
@@ -48,7 +51,7 @@
 			{
 				"command" : 2,
 				"file" : 2,
-				"line" : 69,
+				"line" : 38,
 				"parent" : 3
 			},
 			{
@@ -74,16 +77,16 @@
 		"major" : 2,
 		"minor" : 10
 	},
-	"id" : "imgui::imgui::@6890427a1f51a3e7e1df",
+	"id" : "SDL2::SDL2::@6890427a1f51a3e7e1df",
 	"imported" : true,
 	"local" : true,
-	"name" : "imgui::imgui",
-	"nameOnDisk" : "libimguid.a",
+	"name" : "SDL2::SDL2",
+	"nameOnDisk" : "SDL2d.dll",
 	"paths" : 
 	{
 		"build" : ".",
 		"source" : "."
 	},
 	"sources" : [],
-	"type" : "STATIC_LIBRARY"
+	"type" : "SHARED_LIBRARY"
 }

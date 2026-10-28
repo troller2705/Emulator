@@ -1,5 +1,6 @@
-#include "ppu.h"
-#include "mmu.h"
+#include "../../include/Core_GBC/gbc_ppu.h"
+#include "../../include/Core_GBC/gbc_mmu.h"
+#include "../../include/Core_Shared/color_utils.h"
 #include <cstdlib>
 
 PPU::PPU()
@@ -414,16 +415,5 @@ void PPU::check_lyc(MMU& mmu) {
 }
 
 uint32_t PPU::color_correct_rgb555(uint8_t byte1, uint8_t byte2) {
-    uint16_t rgb555 = byte1 | (byte2 << 8);
-
-    uint8_t r = (rgb555 & 0x001F);
-    uint8_t g = (rgb555 & 0x03E0) >> 5;
-    uint8_t b = (rgb555 & 0x7C00) >> 10;
-
-    // Scale 5-bit (0-31) to 8-bit (0-255)
-    uint8_t r8 = (r << 3) | (r >> 2);
-    uint8_t g8 = (g << 3) | (g >> 2);
-    uint8_t b8 = (b << 3) | (b >> 2);
-
-    return 0xFF000000 | (r8 << 16) | (g8 << 8) | b8;
+    return CoreShared::bgr555_bytes_to_argb8888(byte1, byte2);
 }

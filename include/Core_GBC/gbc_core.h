@@ -1,11 +1,11 @@
 #pragma once
 #include <cstdint>
 #include <vector>
-#include "mmu.h"
-#include "cpu.h"
-#include "timer.h"
-#include "IEmulatorCore.h"
-#include "ppu.h"
+#include "../../include/Core_GBC/gbc_mmu.h"
+#include "gbc_cpu.h"
+#include "../../include/Core_GBC/gbc_timer.h"
+#include "../Core_Shared/IEmulatorCore.h"
+#include "gbc_ppu.h"
 
 class GBCCore : public IEmulatorCore {
 private:

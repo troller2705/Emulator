@@ -1,0 +1,2 @@
+Fix Debug (my pc specific): \
+D:\JetBrains\CLion\bin\cmake\win\x64\bin\cmake.exe -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE="D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-mingw-dynamic -S D:\Emulator -B D:\Emulator\cmake-build-debug  

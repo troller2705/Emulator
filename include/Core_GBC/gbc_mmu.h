@@ -3,9 +3,9 @@
 #include <vector>
 #include <array>
 #include <memory>
-#include "ppu.h"
-#include "apu.h"
-#include "ICartridge.h"
+#include "../../include/Core_GBC/gbc_ppu.h"
+#include "gbc_apu.h"
+#include "../Core_Shared/ICartridge.h"
 
 class Timer; // 1. Forward declare the Timer class here
 

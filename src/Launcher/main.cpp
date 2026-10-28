@@ -1,7 +1,7 @@
 #include <cstring>
 #include <SDL2/SDL.h>
-#include "IEmulatorCore.h"
-#include "gbc_core.h"
+#include "../../include/Core_Shared/IEmulatorCore.h"
+#include "../../include/Core_GBC/gbc_core.h"
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -13,7 +13,7 @@
 // --- IMGUI HEADERS ---
 #include <imgui.h>
 
-#include "gba_core.h"
+#include "../../include/Core_GBA/gba_core.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "imgui_memory_editor.h"
@@ -137,8 +137,8 @@ int main(int argc, char* argv[]) {
 
     int selected_core_idx = static_cast<int>(CoreType::AutoDetect);
     bool show_launcher = true;
-    bool show_cpu_debugger = true;
-    bool show_vram_viewer = true;
+    bool show_cpu_debugger = false;
+    bool show_vram_viewer = false;
     bool is_paused = false;
 
     static MemoryEditor mem_edit;
@@ -387,13 +387,25 @@ int main(int argc, char* argv[]) {
 
                 ImGui::Separator();
                 CPUState state = core->get_cpu_state();
-                ImGui::Text("PC: 0x%04X", state.PC);
-                ImGui::Text("SP: 0x%04X", state.SP);
-                ImGui::Spacing();
-                ImGui::Text("AF: 0x%02X%02X", state.A, state.F);
-                ImGui::Text("BC: 0x%02X%02X", state.B, state.C);
-                ImGui::Text("DE: 0x%02X%02X", state.D, state.E);
-                ImGui::Text("HL: 0x%02X%02X", state.H, state.L);
+                if (state.is_gba) {
+                    ImGui::Text("State: %s | CPSR: 0x%08X",
+                        (state.cpsr & (1 << 5)) ? "THUMB" : "ARM", state.cpsr);
+                    ImGui::Text("PC (R15): 0x%08X", state.gba_regs[15]);
+                    ImGui::Text("LR (R14): 0x%08X", state.gba_regs[14]);
+                    ImGui::Text("SP (R13): 0x%08X", state.gba_regs[13]);
+                    ImGui::Spacing();
+                    for (int r = 0; r <= 12; ++r) {
+                        ImGui::Text("R%-2d: 0x%08X", r, state.gba_regs[r]);
+                    }
+                } else {
+                    ImGui::Text("PC: 0x%04X", state.PC);
+                    ImGui::Text("SP: 0x%04X", state.SP);
+                    ImGui::Spacing();
+                    ImGui::Text("AF: 0x%02X%02X", state.A, state.F);
+                    ImGui::Text("BC: 0x%02X%02X", state.B, state.C);
+                    ImGui::Text("DE: 0x%02X%02X", state.D, state.E);
+                    ImGui::Text("HL: 0x%02X%02X", state.H, state.L);
+                }
                 ImGui::End();
             }
 

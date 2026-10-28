@@ -1,13 +1,13 @@
-#include "mmu.h"
-#include "MBC1.h"
-#include "MBC2.h"
-#include "MBC3.h"
-#include "MBC5.h"
-#include "ROMOnly.h"
+#include "../../include/Core_GBC/gbc_mmu.h"
+#include "../../include/Core_GBC/MBC1.h"
+#include "../../include/Core_GBC/MBC2.h"
+#include "../../include/Core_GBC/MBC3.h"
+#include "../../include/Core_GBC/MBC5.h"
+#include "../../include/Core_GBC/ROMOnly.h"
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
-#include "timer.h"
+#include "../../include/Core_GBC/gbc_timer.h"
 
 MMU::MMU() {
     for (auto& bank : m_vram) {

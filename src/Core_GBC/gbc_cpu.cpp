@@ -1,4 +1,4 @@
-#include "cpu.h"
+#include "../../include/Core_GBC/gbc_cpu.h"
 #include <iostream>
 
 // A simple way to track recent history

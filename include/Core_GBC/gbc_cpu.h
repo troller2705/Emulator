@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include "mmu.h" // The CPU needs to talk to the MMU
+#include "gbc_mmu.h"
 
 // We use a struct to hold the 8-bit pair, and a union to overlap them with a 16-bit integer
 union RegisterPair {

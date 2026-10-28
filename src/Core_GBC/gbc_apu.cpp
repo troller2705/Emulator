@@ -1,4 +1,4 @@
-#include "apu.h"
+#include "../../include/Core_GBC/gbc_apu.h"
 
 // The 4 square wave duty cycles (8 steps each)
 static const uint8_t DUTY_CYCLES[4][8] = {
