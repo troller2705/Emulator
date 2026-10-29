@@ -14,6 +14,12 @@ struct CPUState {
     bool is_gba = false;
     std::array<uint32_t, 16> gba_regs{};
     uint32_t cpsr = 0;
+
+    // SNES 16-bit 65C816 Registers
+    bool is_snes = false;
+    uint16_t snes_A = 0, snes_X = 0, snes_Y = 0, snes_D = 0;
+    uint8_t  snes_PB = 0, snes_DB = 0, snes_P = 0;
+    bool flag_m = false, flag_x = false, flag_e = false;
 };
 
 class IEmulatorCore {

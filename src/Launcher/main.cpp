@@ -1,7 +1,6 @@
 #include <cstring>
 #include <SDL2/SDL.h>
 #include "../../include/Core_Shared/IEmulatorCore.h"
-#include "../../include/Core_GBC/gbc_core.h"
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -15,7 +14,9 @@
 
 #include "../../include/Launcher/input_mapper.h"
 
+#include "../../include/Core_GBC/gbc_core.h"
 #include "../../include/Core_GBA/gba_core.h"
+#include "../../include/Core_SNES/snes_core.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "imgui_memory_editor.h"
@@ -43,13 +44,15 @@ std::vector<uint8_t> load_file(const std::string& filepath) {
 enum class CoreType {
     AutoDetect = 0,
     GB_GBC,
-    GBA
+    GBA,
+    SNES
 };
 
 const char* CORE_NAMES[] = {
     "Auto-Detect (By Extension)",
     "Game Boy / Game Boy Color (GBCCore)",
-    "Game Boy Advance (GBACore)"
+    "Game Boy Advance (GBACore)",
+    "Super Nintendo (SNESCore)"
 };
 
 std::vector<fs::path> scan_rom_directory(const std::string& dir_path) {
@@ -63,7 +66,7 @@ std::vector<fs::path> scan_rom_directory(const std::string& dir_path) {
         if (entry.is_regular_file()) {
             std::string ext = entry.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext == ".gb" || ext == ".gbc" || ext == ".gba") {
+            if (ext == ".gb" || ext == ".gbc" || ext == ".gba" || ext == ".sfc" || ext == ".smc") {
                 roms.push_back(entry.path());
             }
         }
@@ -172,11 +175,15 @@ int main(int argc, char* argv[]) {
                 new_core = std::make_unique<GBCCore>();
             } else if (ext == ".gba") {
                 new_core = std::make_unique<GBACore>();
+            } else if (ext == ".sfc" || ext == ".smc") {
+                new_core = std::make_unique<SNESCore>();
             }
         } else if (core_choice == CoreType::GB_GBC) {
             new_core = std::make_unique<GBCCore>();
         } else if (core_choice == CoreType::GBA) {
             new_core = std::make_unique<GBACore>();
+        } else if (core_choice == CoreType::SNES) {
+            new_core = std::make_unique<SNESCore>();
         }
 
         if (!new_core || !new_core->load_rom(rom_data)) {
@@ -354,6 +361,16 @@ int main(int argc, char* argv[]) {
                     for (int r = 0; r <= 12; ++r) {
                         ImGui::Text("R%-2d: 0x%08X", r, state.gba_regs[r]);
                     }
+                } else if (state.is_snes) {
+                    ImGui::Text("State: 65C816 | Flags-> M:%d X:%d E:%d",
+                        state.flag_m, state.flag_x, state.flag_e);
+                    ImGui::Separator();
+                    ImGui::Text("PB:PC: %02X:%04X", state.snes_PB, state.PC);
+                    ImGui::Text("A: %04X | X: %04X | Y: %04X",
+                        state.snes_A, state.snes_X, state.snes_Y);
+                    ImGui::Text("SP: %04X | DP: %04X | DB: %02X",
+                        state.SP, state.snes_D, state.snes_DB);
+                    ImGui::Text("P (Status): 0x%02X", state.snes_P);
                 } else {
                     ImGui::Text("PC: 0x%04X", state.PC);
                     ImGui::Text("SP: 0x%04X", state.SP);

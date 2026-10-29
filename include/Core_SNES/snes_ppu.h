@@ -1,0 +1,8 @@
+//
+// Created by Cole on 2026-10-29.
+//
+
+#ifndef ALLINONEEMULATOR_SNES_PPU_H
+#define ALLINONEEMULATOR_SNES_PPU_H
+
+#endif //ALLINONEEMULATOR_SNES_PPU_H

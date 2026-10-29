@@ -175,6 +175,51 @@ build CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_apu.cpp.obj: CXX_COMPILER
   OBJECT_FILE_DIR = CMakeFiles\EmulatorLauncher.dir\src\Core_GBA
   TARGET_SUPPORT_DIR = CMakeFiles\EmulatorLauncher.dir
 
+build CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_core.cpp.obj: CXX_COMPILER__EmulatorLauncher_unscanned_Debug D$:/Emulator/src/Core_SNES/snes_core.cpp || cmake_object_order_depends_target_EmulatorLauncher
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES\snes_core.cpp.obj.d
+  FLAGS = -g -std=gnu++17 -fdiagnostics-color=always
+  INCLUDES = -ID:/Emulator/include -ID:/Emulator/include/* -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include/SDL2
+  OBJECT_DIR = CMakeFiles\EmulatorLauncher.dir
+  OBJECT_FILE_DIR = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES
+  TARGET_SUPPORT_DIR = CMakeFiles\EmulatorLauncher.dir
+
+build CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_cpu.cpp.obj: CXX_COMPILER__EmulatorLauncher_unscanned_Debug D$:/Emulator/src/Core_SNES/snes_cpu.cpp || cmake_object_order_depends_target_EmulatorLauncher
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES\snes_cpu.cpp.obj.d
+  FLAGS = -g -std=gnu++17 -fdiagnostics-color=always
+  INCLUDES = -ID:/Emulator/include -ID:/Emulator/include/* -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include/SDL2
+  OBJECT_DIR = CMakeFiles\EmulatorLauncher.dir
+  OBJECT_FILE_DIR = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES
+  TARGET_SUPPORT_DIR = CMakeFiles\EmulatorLauncher.dir
+
+build CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_mmu.cpp.obj: CXX_COMPILER__EmulatorLauncher_unscanned_Debug D$:/Emulator/src/Core_SNES/snes_mmu.cpp || cmake_object_order_depends_target_EmulatorLauncher
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES\snes_mmu.cpp.obj.d
+  FLAGS = -g -std=gnu++17 -fdiagnostics-color=always
+  INCLUDES = -ID:/Emulator/include -ID:/Emulator/include/* -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include/SDL2
+  OBJECT_DIR = CMakeFiles\EmulatorLauncher.dir
+  OBJECT_FILE_DIR = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES
+  TARGET_SUPPORT_DIR = CMakeFiles\EmulatorLauncher.dir
+
+build CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_ppu.cpp.obj: CXX_COMPILER__EmulatorLauncher_unscanned_Debug D$:/Emulator/src/Core_SNES/snes_ppu.cpp || cmake_object_order_depends_target_EmulatorLauncher
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES\snes_ppu.cpp.obj.d
+  FLAGS = -g -std=gnu++17 -fdiagnostics-color=always
+  INCLUDES = -ID:/Emulator/include -ID:/Emulator/include/* -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include/SDL2
+  OBJECT_DIR = CMakeFiles\EmulatorLauncher.dir
+  OBJECT_FILE_DIR = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES
+  TARGET_SUPPORT_DIR = CMakeFiles\EmulatorLauncher.dir
+
+build CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_apu.cpp.obj: CXX_COMPILER__EmulatorLauncher_unscanned_Debug D$:/Emulator/src/Core_SNES/snes_apu.cpp || cmake_object_order_depends_target_EmulatorLauncher
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES\snes_apu.cpp.obj.d
+  FLAGS = -g -std=gnu++17 -fdiagnostics-color=always
+  INCLUDES = -ID:/Emulator/include -ID:/Emulator/include/* -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include -isystem D:/Emulator/cmake-build-debug/vcpkg_installed/x64-mingw-dynamic/include/SDL2
+  OBJECT_DIR = CMakeFiles\EmulatorLauncher.dir
+  OBJECT_FILE_DIR = CMakeFiles\EmulatorLauncher.dir\src\Core_SNES
+  TARGET_SUPPORT_DIR = CMakeFiles\EmulatorLauncher.dir
+
 build CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdl2.cpp.obj: CXX_COMPILER__EmulatorLauncher_unscanned_Debug D$:/Emulator/src/imgui/imgui_impl_sdl2.cpp || cmake_object_order_depends_target_EmulatorLauncher
   CONFIG = Debug
   DEP_FILE = CMakeFiles\EmulatorLauncher.dir\src\imgui\imgui_impl_sdl2.cpp.obj.d
@@ -201,7 +246,7 @@ build CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdlrenderer2.cpp.obj:
 #############################################
 # Link the executable EmulatorLauncher.exe
 
-build EmulatorLauncher.exe: CXX_EXECUTABLE_LINKER__EmulatorLauncher_Debug CMakeFiles/EmulatorLauncher.dir/src/Launcher/main.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Launcher/input_mapper.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_core.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_mmu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_cpu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_ppu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_timer.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_apu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_core.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_mmu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_cpu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_ppu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_timer.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_apu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdl2.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdlrenderer2.cpp.obj | vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2maind.a vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2d.dll.a vcpkg_installed/x64-mingw-dynamic/debug/lib/libimguid.a
+build EmulatorLauncher.exe: CXX_EXECUTABLE_LINKER__EmulatorLauncher_Debug CMakeFiles/EmulatorLauncher.dir/src/Launcher/main.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Launcher/input_mapper.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_core.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_mmu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_cpu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_ppu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_timer.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBC/gbc_apu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_core.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_mmu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_cpu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_ppu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_timer.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_GBA/gba_apu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_core.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_cpu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_mmu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_ppu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_apu.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdl2.cpp.obj CMakeFiles/EmulatorLauncher.dir/src/imgui/imgui_impl_sdlrenderer2.cpp.obj | vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2maind.a vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2d.dll.a vcpkg_installed/x64-mingw-dynamic/debug/lib/libimguid.a
   CONFIG = Debug
   FLAGS = -g
   LINK_LIBRARIES = vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2maind.a  vcpkg_installed/x64-mingw-dynamic/debug/lib/libSDL2d.dll.a  vcpkg_installed/x64-mingw-dynamic/debug/lib/libimguid.a  -lshell32  -Wl,--undefined=WinMain  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32

@@ -39,6 +39,13 @@ set(SOURCES
         src/Core_GBA/gba_timer.cpp
         src/Core_GBA/gba_apu.cpp
 
+        # Super Nintendo Entertainment System Core
+        src/Core_SNES/snes_core.cpp
+        src/Core_SNES/snes_cpu.cpp
+        src/Core_SNES/snes_mmu.cpp
+        src/Core_SNES/snes_ppu.cpp
+        src/Core_SNES/snes_apu.cpp
+
         # ImGui Backends
         src/imgui/imgui_impl_sdl2.cpp
         src/imgui/imgui_impl_sdlrenderer2.cpp
