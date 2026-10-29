@@ -30,3 +30,7 @@
 11	788	8150102593626688	CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_mmu.cpp.obj	d0c76d0ffe744bf0
 20	671	8150107544213795	CMakeFiles/EmulatorLauncher.dir/src/Core_SNES/snes_cpu.cpp.obj	d937f887c55f533a
 672	1135	8150107550734727	EmulatorLauncher.exe	7d14bcf6f2afc3dd
+13	2399	8150139085329056	CMakeFiles/EmulatorLauncher.dir/src/Launcher/main.cpp.obj	1164261c8d7ce9e6
+2400	2849	8150139109194596	EmulatorLauncher.exe	7d14bcf6f2afc3dd
+14	2471	8150142454195514	CMakeFiles/EmulatorLauncher.dir/src/Launcher/main.cpp.obj	1164261c8d7ce9e6
+2471	2905	8150142478768210	EmulatorLauncher.exe	7d14bcf6f2afc3dd

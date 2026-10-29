@@ -69,3 +69,5 @@ Testing/
 
 ROMs/*
 !ROMs/put_roms_here.txt
+
+cmake-build-*/*
