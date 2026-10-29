@@ -55,6 +55,30 @@ const char* CORE_NAMES[] = {
     "Super Nintendo (SNESCore)"
 };
 
+const std::string CONFIG_FILE = "emulator_config.txt";
+
+// Load ROM directory from file, or use default if file doesn't exist
+std::string load_rom_directory_config() {
+    std::ifstream file(CONFIG_FILE);
+    if (file.is_open()) {
+        std::string path;
+        if (std::getline(file, path) && !path.empty()) {
+            if (fs::exists(path) && fs::is_directory(path)) {
+                return path;
+            }
+        }
+    }
+    // Default fallback path
+    return "D:/Emulator/ROMs";
+}
+
+void save_rom_directory_config(const std::string& path) {
+    std::ofstream file(CONFIG_FILE);
+    if (file.is_open()) {
+        file << path;
+    }
+}
+
 std::vector<fs::path> scan_rom_directory(const std::string& dir_path) {
     std::vector<fs::path> roms;
     std::error_code ec;
@@ -125,10 +149,17 @@ int main(int argc, char* argv[]) {
     }
 
     // --- LAUNCHER & EMULATOR STATE ---
+    // --- LAUNCHER & EMULATOR STATE ---
     std::unique_ptr<IEmulatorCore> core = nullptr;
     std::string current_rom_path = "";
     std::string current_save_path = "";
-    char rom_dir_buf[256] = "D:/Emulator/ROMs";
+
+    // Load saved directory or fallback to default
+    std::string loaded_rom_dir = load_rom_directory_config();
+    char rom_dir_buf[256];
+    std::strncpy(rom_dir_buf, loaded_rom_dir.c_str(), sizeof(rom_dir_buf));
+    rom_dir_buf[sizeof(rom_dir_buf) - 1] = '\0';
+
     std::vector<fs::path> available_roms = scan_rom_directory(rom_dir_buf);
 
     int selected_core_idx = static_cast<int>(CoreType::AutoDetect);
@@ -300,10 +331,14 @@ int main(int argc, char* argv[]) {
 
             ImGui::Text("2. ROM Directory:");
             ImGui::PushItemWidth(-100.0f);
-            ImGui::InputText("##RomDir", rom_dir_buf, sizeof(rom_dir_buf));
+            if (ImGui::InputText("##RomDir", rom_dir_buf, sizeof(rom_dir_buf))) {
+                // Save config whenever the text changes
+                save_rom_directory_config(rom_dir_buf);
+            }
             ImGui::PopItemWidth();
             ImGui::SameLine();
             if (ImGui::Button("Refresh", ImVec2(90.0f, 0.0f))) {
+                save_rom_directory_config(rom_dir_buf);
                 available_roms = scan_rom_directory(rom_dir_buf);
             }
 
@@ -312,7 +347,7 @@ int main(int argc, char* argv[]) {
 
             ImGui::BeginChild("ROMList", ImVec2(0, -10), true);
             if (available_roms.empty()) {
-                ImGui::TextDisabled("No .gb or .gbc files found in directory.");
+                ImGui::TextDisabled("No known rom files found in directory.");
             } else {
                 for (const auto& rom_path : available_roms) {
                     std::string filename = rom_path.filename().string();
