@@ -13,6 +13,12 @@ endif()
 
 project(AllInOneEmulator)
 
+if(MINGW)
+    # Statically embed GCC/C++ runtimes without breaking system threading/CRT symbols
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -static-libgcc")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -62,16 +68,3 @@ target_link_libraries(EmulatorLauncher
         $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
         imgui::imgui
 )
-
-# Automatically copy SDL2.dll to the build output directory so executables run right away
-if(WIN32)
-    foreach(CONFIG_DIR "cmake-build-debug" "cmake-build-release-static")
-        if(EXISTS "${CMAKE_SOURCE_DIR}/${CONFIG_DIR}/vcpkg_installed/x64-mingw-dynamic/bin/SDL2.dll")
-            add_custom_command(TARGET EmulatorLauncher POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/${CONFIG_DIR}/vcpkg_installed/x64-mingw-dynamic/bin/SDL2.dll"
-                    "$<TARGET_FILE_DIR:EmulatorLauncher>/SDL2.dll"
-            )
-        endif()
-    endforeach()
-endif()

@@ -24,13 +24,24 @@
     },
     {
       "name": "windows-release-single-exe",
-      "displayName": "Windows Release",
-      "description": "Statically links runtime and libraries into a standalone .exe",
+      "displayName": "Windows Release (MinGW Static)",
+      "description": "Statically links runtime and libraries into a standalone .exe using CLion MinGW",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/cmake-build-release-static",
+      "environment": {
+        "CC": "D:/JetBrains/CLion/bin/mingw/bin/gcc.exe",
+        "CXX": "D:/JetBrains/CLion/bin/mingw/bin/g++.exe",
+        "PATH": "D:/JetBrains/CLion/bin/mingw/bin;$env:PATH"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "BUILD_STATIC_EXE": "ON"
+        "BUILD_STATIC_EXE": "ON",
+        "CMAKE_C_COMPILER": "D:/JetBrains/CLion/bin/mingw/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "D:/JetBrains/CLion/bin/mingw/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "D:/JetBrains/CLion/bin/ninja/win/x64/ninja.exe",
+        "CMAKE_TOOLCHAIN_FILE": "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+        "VCPKG_HOST_TRIPLET": "x64-mingw-static"
       },
       "condition": {
         "type": "equals",
