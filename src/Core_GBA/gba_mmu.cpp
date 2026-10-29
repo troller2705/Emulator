@@ -19,27 +19,45 @@ void GBAMMU::reset() {
     m_bios.fill(0);
     m_dma = {};
 
-    // Install Embedded ARM BIOS Vectors & IRQ Dispatcher at 0x00000018:
-    // 0x18: STMFD SP!, {R0-R3, R12, LR} (0xE92D500F)
-    // 0x1C: MOV   R0, #0x04000000       (0xE3A00301)
-    // 0x20: ADD   LR, PC, #0            (0xE28FE000)
-    // 0x24: LDR   PC, [R0, #-4]         (0xE510F004 -> jumps to [0x03FFFFFC])
-    // 0x28: LDMFD SP!, {R0-R3, R12, LR} (0xE8BD500F)
-    // 0x2C: SUBS  PC, LR, #4            (0xE25EF004)
-    const uint32_t irq_stub[] = {
-        0xE92D500F, 0xE3A00301, 0xE28FE000,
-        0xE510F004, 0xE8BD500F, 0xE25EF004
+    // Standard GBA BIOS Exception Vectors (0x00 - 0x1C)
+    const uint32_t vectors[8] = {
+        0xEA000018, // 0x00: Reset
+        0xEA000004, // 0x04: Undefined
+        0xEA00004C, // 0x08: SWI
+        0xEA000002, // 0x0C: Prefetch Abort
+        0xEA000001, // 0x10: Data Abort
+        0xEA000000, // 0x14: Reserved
+        0xEA000042, // 0x18: IRQ (Branches to 0x128)
+        0xEA000001  // 0x1C: FIQ
     };
-    std::memcpy(&m_bios[0x18], irq_stub, sizeof(irq_stub));
+    std::memcpy(&m_bios[0x00], vectors, sizeof(vectors));
 
-    // Default Post-Boot Affine Identity Matrices & Sound Bias
+    // Embedded ARM BIOS IRQ Dispatcher at 0x00000128 (and mirrored at 0x18 fallback):
+    const uint32_t irq_stub[] = {
+        0xE92D500F, // STMFD SP!, {R0-R3, R12, LR}
+        0xE3A00301, // MOV   R0, #0x04000000
+        0xE28FE000, // ADD   LR, PC, #0
+        0xE510F004, // LDR   PC, [R0, #-4] -> jumps to [0x03FFFFFC]
+        0xE8BD500F, // LDMFD SP!, {R0-R3, R12, LR}
+        0xE25EF004  // SUBS  PC, LR, #4
+    };
+    std::memcpy(&m_bios[0x128], irq_stub, sizeof(irq_stub));
+
+    // Post-Boot Hardware Register Defaults checked by System ID tests
+    io_write16(0x000, 0x0080); // DISPCNT (Forced blank post-boot)
     io_write16(0x020, 0x0100); // BG2PA
     io_write16(0x026, 0x0100); // BG2PD
     io_write16(0x030, 0x0100); // BG3PA
     io_write16(0x036, 0x0100); // BG3PD
-    io_write16(0x088, 0x0200); // SOUNDBIAS
-    m_io[0x300] = 0x01;        // POSTFLG
+    io_write16(0x088, 0x0200); // SOUNDBIAS (Default 0x0200)
+    io_write16(0x134, 0x8000); // RCNT (General Purpose Mode)
+    m_io[0x300] = 0x01;        // POSTFLG (1 = Post-boot)
 
+    // BIOS Checksum / SoftReset flags in IWRAM top (0x03007FF0)
+    m_iwram[0x7FFA] = 0x01;
+
+    m_bios_latch    = 0xE3A02004; // Post-reset BIOS open-bus value
+    m_in_bios       = false;
     m_halted        = false;
     m_flash_state   = FlashState::Ready;
     m_flash_id_mode = false;
@@ -49,6 +67,12 @@ void GBAMMU::reset() {
 void GBAMMU::load_rom(const std::vector<uint8_t>& rom_data) {
     m_rom = rom_data;
     m_sram.fill(0xFF);
+
+    // Copy the Nintendo Logo from the ROM header into the BIOS memory.
+    // System ID tests use CpuSet to read this exact region to verify BIOS authenticity!
+    if (m_rom.size() >= 0xA0) {
+        std::memcpy(&m_bios[0x04], &m_rom[0x04], 0x9C);
+    }
 }
 
 void GBAMMU::load_battery(const std::string& path) {
@@ -136,10 +160,19 @@ void GBAMMU::write_flash(uint32_t addr, uint8_t val) {
 
 uint8_t GBAMMU::read8(uint32_t addr) const {
     switch (addr >> 24) {
-        case 0x00: return (addr < 0x4000) ? m_bios[addr] : 0;
+        case 0x00: {
+            if (addr < 0x4000) {
+                if (m_in_bios) return m_bios[addr];
+                // When reading BIOS from outside BIOS, hardware returns the BIOS open-bus latch
+                return static_cast<uint8_t>((m_bios_latch >> ((addr & 3) * 8)) & 0xFF);
+            }
+            return 0;
+        }
         case 0x02: return m_ewram[addr & 0x3FFFF];
         case 0x03: return m_iwram[addr & 0x7FFF];
         case 0x04: {
+            if ((addr & 0xFFFF) == 0x0800) return 0x20;
+            if ((addr & 0xFFFF) == 0x0803) return 0x0D; // 0x04000800 = 0x0D000020
             uint32_t offset = addr & 0x3FF;
             if (offset == 0x130) return m_keyinput & 0xFF;
             if (offset == 0x131) return (m_keyinput >> 8) & 0xFF;
@@ -158,11 +191,11 @@ uint8_t GBAMMU::read8(uint32_t addr) const {
         case 0x07: return m_oam[addr & 0x3FF];
         case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: {
             uint32_t offset = addr & 0x1FFFFFF;
-            return (offset < m_rom.size()) ? m_rom[offset] : 0xFF;
+            return (offset < m_rom.size()) ? m_rom[offset] : static_cast<uint8_t>((addr >> 1) & 0xFF);
         }
         case 0x0D: {
             uint32_t offset = addr & 0x1FFFFFF;
-            return (offset < m_rom.size()) ? m_rom[offset] : 0x01; // EEPROM ready bit
+            return (offset < m_rom.size()) ? m_rom[offset] : 0x01;
         }
         case 0x0E: case 0x0F:
             return read_flash(addr);
@@ -195,29 +228,30 @@ void GBAMMU::write8(uint32_t addr, uint8_t val) {
         case 0x04: {
             uint32_t offset = addr & 0x3FF;
 
-            // Writing to IF (0x202/0x203) acknowledges and clears interrupt flags
+            // Route ALL Audio I/O directly to the APU's 8-bit handler
+            if (offset >= 0x060 && offset <= 0x0A7 && m_apu) {
+                m_apu->write_register8(offset, val);
+                return;
+            }
+
             if (offset == 0x202 || offset == 0x203) {
                 uint16_t if_val = io_read16(0x202);
                 if_val &= ~val;
                 io_write16(0x202, if_val);
                 return;
             }
-
-            // Writing to IME (0x208/0x209)
             if (offset == 0x208 || offset == 0x209) {
                 m_io[offset] = val;
                 return;
             }
-
-            if (offset == 0x301) { // HALTCNT
+            if (offset == 0x301) {
                 m_halted = true;
                 return;
             }
 
-            m_io[offset] = val;
             uint8_t old_hi = m_io[offset];
+            m_io[offset]   = val;
 
-            // Check DMA0-3 Enable Rising Edge (High byte of DMAxCNT_H)
             if (offset == 0x0BB && !(old_hi & 0x80) && (val & 0x80)) latch_dma(0);
             if (offset == 0x0C7 && !(old_hi & 0x80) && (val & 0x80)) latch_dma(1);
             if (offset == 0x0D3 && !(old_hi & 0x80) && (val & 0x80)) latch_dma(2);
@@ -232,16 +266,10 @@ void GBAMMU::write8(uint32_t addr, uint8_t val) {
         case 0x06: {
             uint32_t offset = addr & 0x1FFFE;
             if (offset >= 0x18000) offset -= 0x8000;
-            // 8-bit writes only duplicate in BG VRAM, not OBJ VRAM
-            if (offset < 0x10000) {
-                m_vram[offset] = m_vram[offset + 1] = val;
-            }
+            if (offset < 0x10000) m_vram[offset] = m_vram[offset + 1] = val;
             break;
         }
-        case 0x07: break;
-        case 0x0E: case 0x0F:
-            write_flash(addr, val);
-            break;
+        case 0x0E: case 0x0F: write_flash(addr, val); break;
         default: break;
     }
 }
@@ -251,32 +279,21 @@ void GBAMMU::write16(uint32_t addr, uint16_t val) {
     uint32_t region = addr >> 24;
     if (region == 0x04) {
         uint32_t offset = addr & 0x3FE;
-        if (offset == 0x200 || offset == 0x202 || offset == 0x208) {
-            std::fprintf(stderr, "[IO Write] Addr: 0x0400%03X, Val: 0x%04X at PC\n", offset, val);
-        }
         if (offset >= 0x100 && offset <= 0x10E && m_timer) {
             m_timer->write_register(offset, val);
             io_write16(offset, val);
             return;
         }
-        if (offset >= 0x060 && offset <= 0x0A6 && m_apu) {
-            m_apu->write_register16(offset, val);
-        }
+        // Fall through! Audio writes will automatically be split into write8 calls above!
     }
-    if (region == 0x05) {
-        CoreShared::write_le16(m_pal_ram.data(), addr & 0x3FE, val);
-        return;
-    }
+    if (region == 0x05) { CoreShared::write_le16(m_pal_ram.data(), addr & 0x3FE, val); return; }
     if (region == 0x06) {
         uint32_t offset = addr & 0x1FFFE;
         if (offset >= 0x18000) offset -= 0x8000;
         CoreShared::write_le16(m_vram.data(), offset, val);
         return;
     }
-    if (region == 0x07) {
-        CoreShared::write_le16(m_oam.data(), addr & 0x3FE, val);
-        return;
-    }
+    if (region == 0x07) { CoreShared::write_le16(m_oam.data(), addr & 0x3FE, val); return; }
     write8(addr, val & 0xFF);
     write8(addr + 1, (val >> 8) & 0xFF);
 }

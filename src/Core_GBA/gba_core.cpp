@@ -1,4 +1,5 @@
 #include "../../include/Core_GBA/gba_core.h"
+#include "../../include/Launcher/input_mapper.h"
 #include <iostream>
 #include <cstring>
 
@@ -131,14 +132,17 @@ void GBACore::run_frame() {
 }
 
 void GBACore::set_input(uint32_t input_state) {
+    using namespace EmulatorInput;
     uint16_t keys = 0x03FF;
-    if (input_state & (1 << 0)) keys &= ~(1 << 0); // A
-    if (input_state & (1 << 1)) keys &= ~(1 << 1); // B
-    if (input_state & (1 << 2)) keys &= ~(1 << 2); // Select
-    if (input_state & (1 << 3)) keys &= ~(1 << 3); // Start
-    if (input_state & (1 << 4)) keys &= ~(1 << 4); // Right
-    if (input_state & (1 << 5)) keys &= ~(1 << 5); // Left
-    if (input_state & (1 << 6)) keys &= ~(1 << 6); // Up
-    if (input_state & (1 << 7)) keys &= ~(1 << 7); // Down
+    if (input_state & (BTN_A | BTN_X))  keys &= ~(1 << 0); // A
+    if (input_state & (BTN_B | BTN_Y))  keys &= ~(1 << 1); // B
+    if (input_state & BTN_SELECT)       keys &= ~(1 << 2); // Select
+    if (input_state & BTN_START)        keys &= ~(1 << 3); // Start
+    if (input_state & BTN_RIGHT)        keys &= ~(1 << 4); // Right
+    if (input_state & BTN_LEFT)         keys &= ~(1 << 5); // Left
+    if (input_state & BTN_UP)           keys &= ~(1 << 6); // Up
+    if (input_state & BTN_DOWN)         keys &= ~(1 << 7); // Down
+    if (input_state & (BTN_R | BTN_R2)) keys &= ~(1 << 8); // R Shoulder
+    if (input_state & (BTN_L | BTN_L2)) keys &= ~(1 << 9); // L Shoulder
     m_mmu.set_keyinput(keys);
 }

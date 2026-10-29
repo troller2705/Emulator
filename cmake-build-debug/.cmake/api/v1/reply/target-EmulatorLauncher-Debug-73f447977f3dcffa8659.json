@@ -38,7 +38,7 @@
 			{
 				"command" : 1,
 				"file" : 1,
-				"line" : 46,
+				"line" : 47,
 				"parent" : 0
 			},
 			{
@@ -50,7 +50,7 @@
 			{
 				"command" : 2,
 				"file" : 1,
-				"line" : 51,
+				"line" : 52,
 				"parent" : 0
 			},
 			{
@@ -94,7 +94,7 @@
 			{
 				"command" : 8,
 				"file" : 1,
-				"line" : 48,
+				"line" : 49,
 				"parent" : 0
 			}
 		]
@@ -174,7 +174,8 @@
 				11,
 				12,
 				13,
-				14
+				14,
+				15
 			]
 		}
 	],
@@ -268,7 +269,8 @@
 				11,
 				12,
 				13,
-				14
+				14,
+				15
 			]
 		}
 	],
@@ -278,6 +280,12 @@
 			"backtrace" : 2,
 			"compileGroupIndex" : 0,
 			"path" : "src/Launcher/main.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "src/Launcher/input_mapper.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

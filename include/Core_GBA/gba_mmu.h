@@ -70,6 +70,10 @@ public:
     bool is_halted() const { return m_halted; }
     void set_halted(bool h) { m_halted = h; }
 
+    bool is_in_bios() const { return m_in_bios; }
+    void set_in_bios(bool in_bios) { m_in_bios = in_bios; }
+    void set_bios_latch(uint32_t val) { m_bios_latch = val; }
+
 private:
     std::array<uint8_t, 0x04000> m_bios{};    // 16 KB BIOS
     std::array<uint8_t, 0x40000> m_ewram{};   // 256 KB Work RAM
@@ -105,4 +109,7 @@ private:
     uint8_t    m_flash_bank    = 0;
     uint8_t read_flash(uint32_t addr) const;
     void    write_flash(uint32_t addr, uint8_t val);
+
+    uint32_t m_bios_latch = 0xE3A02004; // Post-boot/SWI BIOS fetch latch (MOV R2, #4)
+    bool     m_in_bios    = false;
 };

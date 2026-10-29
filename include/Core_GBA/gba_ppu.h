@@ -21,5 +21,7 @@ private:
     std::array<uint32_t, 128 * 192> m_debug_tile_buffer{};
 
     void render_bg_regular(int ly, int bg, uint16_t bgcnt);
-    void render_sprites(int ly, uint16_t dispcnt, int prio);
+    void render_bg_affine(int ly, int bg, uint16_t bgcnt);
+    void render_sprites(int ly, uint16_t dispcnt, int target_prio);
+    void apply_brightness_effect(int ly);
 };

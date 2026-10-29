@@ -17,6 +17,8 @@ void GBACPU::reset() {
     m_lr_usr = m_lr_irq = m_lr_svc = m_lr_fiq = 0;
     m_spsr_irq = m_spsr_svc = m_spsr_fiq = 0x0000001F;
 
+    m_regs[0]  = 0x08000000;
+    m_regs[1]  = 0x000000EA;
     m_regs[13] = m_sp_usr;
     m_regs[14] = 0x08000000;
     m_regs[15] = 0x08000000;
@@ -183,17 +185,10 @@ void GBACPU::check_irqs() {
     uint16_t ifr = m_mmu.io_read16(0x202);
     uint16_t ime = m_mmu.io_read16(0x208);
 
-    // TEMPORARY TRACE: Check what interrupts are pending vs enabled
-    if ((ie & ifr) != 0) {
-        std::fprintf(stderr, "[IRQ Trace] IE: 0x%04X, IF: 0x%04X, IME: 0x%04X, CPSR_I: %d\n",
-                     ie, ifr, ime, (m_cpsr >> 7) & 1);
-    }
-
     if (ie & ifr) {
         m_mmu.set_halted(false);
         bool irq_disabled = (m_cpsr >> 7) & 1;
         if ((ime & 1) && !irq_disabled) {
-            std::fprintf(stderr, "[IRQ TRACE] SERVICING VBLANK/HBLANK IRQ! Jumping to vector 0x18\n");
             uint32_t old_cpsr = m_cpsr;
             uint32_t next_pc  = m_regs[15];
             switch_mode(0x12); // IRQ mode
@@ -201,12 +196,16 @@ void GBACPU::check_irqs() {
             m_regs[14] = next_pc + 4;
             m_cpsr &= ~(1U << 5); // Switch to ARM state
             m_cpsr |= (1U << 7);  // Mask IRQs
-            m_regs[15] = 0x00000018;
+            m_mmu.set_bios_latch(0xE55EC002);
+            m_regs[15] = 0x00000128; // Jump to BIOS IRQ dispatcher
         }
     }
 }
 
 void GBACPU::handle_swi(uint8_t comment) {
+    bool was_in_bios = m_mmu.is_in_bios();
+    m_mmu.set_in_bios(true); // Temporarily elevate privileges so HLE SWI can read BIOS
+
     switch (comment) {
         case 0x00: // SoftReset
             reset();
@@ -307,6 +306,11 @@ void GBACPU::handle_swi(uint8_t comment) {
                 dst += 4;
                 if (!fixed) src += 4;
             }
+            break;
+        }
+        case 0x0D: {
+            // GetBiosChecksum (Authentic GBA / GBA SP BIOS Checksum)
+            m_regs[0] = 0xBAAE187F;
             break;
         }
         case 0x0E: { // BgAffineSet
@@ -483,6 +487,8 @@ void GBACPU::handle_swi(uint8_t comment) {
         }
         default: break;
     }
+    m_mmu.set_in_bios(was_in_bios); // Restore privileges
+    m_mmu.set_bios_latch(0xE3A02004); // Update open-bus latch
 }
 
 void GBACPU::step_arm() {
@@ -1079,6 +1085,7 @@ void GBACPU::step() {
     check_irqs();
     if (m_mmu.is_halted()) return;
 
+    m_mmu.set_in_bios(m_regs[15] < 0x00004000);
     if (is_thumb()) step_thumb();
     else            step_arm();
 }

@@ -21,6 +21,7 @@ find_package(imgui CONFIG REQUIRED)
 
 set(SOURCES
         src/Launcher/main.cpp
+        src/Launcher/input_mapper.cpp
 
         # Game Boy / Game Boy Color Core
         src/Core_GBC/gbc_core.cpp
