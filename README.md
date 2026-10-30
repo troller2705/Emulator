@@ -52,15 +52,15 @@ cmake --build build
 # 🗺️ Development Roadmap
 ### SNES Core:
 
--[x] CPU Initialization, Reset Vectors, & Core Opcodes
--[x] LoROM Cartridge Loader & MMU
--[ ] NMI and VBlank Interrupt Timing
--[ ] PPU Scanline & Background Rendering
--[ ] SPC700 Audio Core
+- [x] CPU Initialization, Reset Vectors, & Core Opcodes
+- [x] LoROM Cartridge Loader & MMU
+- [ ] NMI and VBlank Interrupt Timing
+- [ ] PPU Scanline & Background Rendering
+- [ ] SPC700 Audio Core
 
 ### Game Boy / GBC Core:
 
--[x] Sharp CPU Core & Instruction Decoder
--[x] Memory Management & MBC Controllers
--[x] PPU Scanline Pipeline & Sprite Rendering
--[x] APU Sound Channel Emulation
+- [x] Sharp CPU Core & Instruction Decoder
+- [x] Memory Management & MBC Controllers
+- [x] PPU Scanline Pipeline & Sprite Rendering
+- [x] APU Sound Channel Emulation
