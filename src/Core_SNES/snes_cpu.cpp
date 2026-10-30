@@ -43,8 +43,18 @@ uint16_t SNES_CPU::fetch16() {
 
 void SNES_CPU::push8(uint8_t val) {
     m_mmu.write8(S.W, val);
-    if (flag_e) S.L--; // Emulation mode locks SP to 0x0100-0x01FF
-    else        S.W--; // Native mode uses full 16-bit SP
+    if (flag_e) {
+        // Keep high byte locked to 0x01 and wrap low byte
+        uint8_t low = (S.W & 0xFF) - 1;
+        S.W = 0x0100 | low;
+    } else {
+        S.W--; // Native mode uses full 16-bit SP
+    }
+}
+
+void SNES_CPU::push16(uint16_t val) {
+    push8((val >> 8) & 0xFF); // High byte
+    push8(val & 0xFF);         // Low byte
 }
 
 uint8_t SNES_CPU::pop8() {
@@ -1288,6 +1298,1341 @@ int SNES_CPU::step() {
             }
             break;
         }
+        case 0x29: { // AND #imm - Logical AND Accumulator with Immediate
+            if (flag_m) {
+                // 8-bit Accumulator Mode
+                uint8_t imm = fetch8();
+                uint8_t result = (A.L & imm);
+                A.L = result;
+                flag_z = (result == 0);
+                flag_n = (result & 0x80) != 0;
+                cycles = 2;
+            } else {
+                // 16-bit Accumulator Mode
+                uint16_t imm = fetch16();
+                uint16_t result = (A.W & imm);
+                A.W = result;
+                flag_z = (result == 0);
+                flag_n = (result & 0x8000) != 0;
+                cycles = 3;
+            }
+            break;
+        }
+        case 0x85: { // STA dp - Store Accumulator Direct Page
+            uint8_t dp_offset = fetch8();
+            uint16_t addr = (D + dp_offset) & 0xFFFF;
+
+            if (flag_m) {
+                // 8-bit Store
+                m_mmu.write8(addr, A.L);
+                cycles = 3;
+            } else {
+                // 16-bit Store
+                m_mmu.write16(addr, A.W);
+                cycles = 4;
+            }
+            break;
+        }
+        case 0xDC: { // JMP [abs] - Jump Absolute Indirect Long
+            uint16_t ptr_low = fetch16();
+            uint32_t ptr_addr = (DB << 16) | ptr_low;
+
+            // Read the 24-bit target address (16-bit target PC + 8-bit target Bank)
+            uint16_t target_pc = m_mmu.read16(ptr_addr);
+            uint8_t  target_pb = m_mmu.read8(ptr_addr + 2);
+
+            PC = target_pc;
+            PB = target_pb;
+            cycles = 6;
+            break;
+        }
+        case 0x64: { // STZ dp - Store Zero Direct Page
+            uint8_t dp_offset = fetch8();
+            uint16_t addr = (D + dp_offset) & 0xFFFF;
+
+            if (flag_m) {
+                // 8-bit Zero Store
+                m_mmu.write8(addr, 0x00);
+                cycles = 3;
+            } else {
+                // 16-bit Zero Store
+                m_mmu.write16(addr, 0x0000);
+                cycles = 4;
+            }
+            break;
+        }
+        case 0x4C: { // JMP abs - Jump Absolute
+            uint16_t target_pc = fetch16();
+            PC = target_pc;
+            cycles = 3;
+            break;
+        }
+        case 0x8B: { // PHB - Push Data Bank Register
+            push8(DB);
+            cycles = 3;
+            break;
+        }
+        case 0x4B: { // PHK - Push Program Bank Register
+            push8(PB);
+            cycles = 3;
+            break;
+        }
+        case 0xAB: { // PLB - Pull Data Bank Register
+            DB = pop8();
+            flag_z = (DB == 0);
+            flag_n = (DB & 0x80) != 0;
+            cycles = 4;
+            break;
+        }
+        case 0xA7: { // LDA [dp] - Load Accumulator Direct Page Indirect Long
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+
+            // Read the 24-bit address from the Direct Page table
+            uint32_t addr = m_mmu.read8(dp_addr) |
+                            (m_mmu.read8((dp_addr + 1) & 0xFFFF) << 8) |
+                            (m_mmu.read8((dp_addr + 2) & 0xFFFF) << 16);
+
+            if (flag_m) {
+                // 8-bit Load
+                A.L = m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                // 16-bit Load
+                A.W = m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x9B: { // TXY - Transfer X to Y
+            if (flag_x) {
+                // 8-bit Transfer
+                Y.L = X.L;
+                flag_z = (Y.L == 0);
+                flag_n = (Y.L & 0x80) != 0;
+            } else {
+                // 16-bit Transfer
+                Y.W = X.W;
+                flag_z = (Y.W == 0);
+                flag_n = (Y.W & 0x8000) != 0;
+            }
+            cycles = 2;
+            break;
+        }
+        case 0xBB: { // TYX - Transfer Y to X
+            if (flag_x) {
+                // 8-bit Transfer
+                X.L = Y.L;
+                flag_z = (X.L == 0);
+                flag_n = (X.L & 0x80) != 0;
+            } else {
+                // 16-bit Transfer
+                X.W = Y.W;
+                flag_z = (X.W == 0);
+                flag_n = (X.W & 0x8000) != 0;
+            }
+            cycles = 2;
+            break;
+        }
+        case 0x07: { // ORA [dp] - Logical OR Accumulator Direct Page Indirect Long
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+
+            // Read the 24-bit target address from the Direct Page
+            uint32_t addr = m_mmu.read8(dp_addr) |
+                            (m_mmu.read8((dp_addr + 1) & 0xFFFF) << 8) |
+                            (m_mmu.read8((dp_addr + 2) & 0xFFFF) << 16);
+
+            if (flag_m) {
+                // 8-bit OR
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                // 16-bit OR
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x1D: { // ORA abs, X - Logical OR Accumulator Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+
+            if (flag_m) {
+                // 8-bit OR
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                // 16-bit OR
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x25: { // AND dp - Logical AND Accumulator Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                // 8-bit AND
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 3;
+            } else {
+                // 16-bit AND
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 4;
+            }
+            break;
+        }
+        case 0x05: { // ORA dp - Logical OR Accumulator Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                // 8-bit OR
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 3;
+            } else {
+                // 16-bit OR
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 4;
+            }
+            break;
+        }
+        case 0xB2: { // LDA (dp) - Load Accumulator Direct Page Indirect
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+
+            // Read the 16-bit target offset from Direct Page, then combine with DB
+            uint16_t target_low = m_mmu.read16(dp_addr);
+            uint32_t addr = (DB << 16) | target_low;
+
+            if (flag_m) {
+                // 8-bit Load
+                A.L = m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                // 16-bit Load
+                A.W = m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x65: { // ADC dp - Add with Carry Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 3;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 4;
+            }
+            break;
+        }
+        case 0x40: { // RTI - Return from Interrupt
+            set_p(pop8());
+            uint8_t low  = pop8();
+            uint8_t high = pop8();
+            PC = (high << 8) | low;
+            if (!flag_e) {
+                PB = pop8(); // Native mode also restores Program Bank
+                cycles = 7;
+            } else {
+                cycles = 6;
+            }
+            break;
+        }
+        case 0xCC: { // CPY abs - Compare Y Register Absolute
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (DB << 16) | addr_low;
+            if (flag_x) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = Y.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (Y.L >= val);
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = Y.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (Y.W >= val);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xBE: { // LDX abs, Y - Load X Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_x) {
+                X.L = m_mmu.read8(addr);
+                flag_z = (X.L == 0);
+                flag_n = (X.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                X.W = m_mmu.read16(addr);
+                flag_z = (X.W == 0);
+                flag_n = (X.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xBC: { // LDY abs, X - Load Y Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_x) {
+                Y.L = m_mmu.read8(addr);
+                flag_z = (Y.L == 0);
+                flag_n = (Y.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                Y.W = m_mmu.read16(addr);
+                flag_z = (Y.W == 0);
+                flag_n = (Y.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xEC: { // CPX abs - Compare X Register Absolute
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (DB << 16) | addr_low;
+            if (flag_x) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = X.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (X.L >= val);
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = X.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (X.W >= val);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x4D: { // EOR abs - Exclusive OR Accumulator Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x2D: { // AND abs - Logical AND Accumulator Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x6D: { // ADC abs - Add with Carry Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xBF: { // LDA long, X - Load Accumulator Absolute Long Indexed with X
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = ((addr_bank << 16) | addr_low) + (flag_x ? X.L : X.W);
+            addr &= 0xFFFFFF;
+            if (flag_m) {
+                A.L = m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                A.W = m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x87: { // STA [dp] - Store Accumulator Direct Page Indirect Long
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+            // Read the 24-bit pointer address from the Direct Page
+            uint32_t addr = m_mmu.read8(dp_addr) |
+                            (m_mmu.read8((dp_addr + 1) & 0xFFFF) << 8) |
+                            (m_mmu.read8((dp_addr + 2) & 0xFFFF) << 16);
+            if (flag_m) {
+                // 8-bit Store
+                m_mmu.write8(addr, A.L);
+                cycles = 6;
+            } else {
+                // 16-bit Store
+                m_mmu.write16(addr, A.W);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x79: { // ADC abs, Y - Add with Carry Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xD9: { // CMP abs, Y - Compare Accumulator Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x0D: { // ORA abs - Logical OR Accumulator Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x49: { // EOR #imm - Exclusive OR Accumulator Immediate
+            if (flag_m) {
+                uint8_t imm = fetch8();
+                A.L ^= imm;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 2;
+            } else {
+                uint16_t imm = fetch16();
+                A.W ^= imm;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 3;
+            }
+            break;
+        }
+        case 0xDF: { // CMP long - Compare Accumulator Absolute Long
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = (addr_bank << 16) | addr_low;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x0E: { // ASL abs - Arithmetic Shift Left Memory Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_c = (val & 0x80) != 0;
+                val <<= 1;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_c = (val & 0x8000) != 0;
+                val <<= 1;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0xE5: { // SBC dp - Subtract with Carry Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 3;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 4;
+            }
+            break;
+        }
+        case 0xF9: { // SBC abs, Y - Subtract with Carry Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x59: { // EOR abs, Y - Exclusive OR Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xDD: { // CMP abs, X - Compare Accumulator Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x45: { // EOR dp - Exclusive OR Accumulator Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 3;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 4;
+            }
+            break;
+        }
+        case 0xED: { // SBC abs - Subtract with Carry Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x09: { // ORA #imm - Logical OR Accumulator Immediate
+            if (flag_m) {
+                uint8_t imm = fetch8();
+                A.L |= imm;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 2;
+            } else {
+                uint16_t imm = fetch16();
+                A.W |= imm;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 3;
+            }
+            break;
+        }
+        case 0x06: { // ASL dp - Arithmetic Shift Left Memory Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_c = (val & 0x80) != 0;
+                val <<= 1;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_c = (val & 0x8000) != 0;
+                val <<= 1;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x7F: { // ADC long, X - Add with Carry Absolute Long Indexed with X
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = ((addr_bank << 16) | addr_low) + (flag_x ? X.L : X.W);
+            addr &= 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0xB1: { // LDA dp_ind, Y - Load Accumulator Direct Page Indirect Indexed with Y
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+            // Read 16-bit pointer from Direct Page (Bank 0)
+            uint16_t ptr_low = m_mmu.read8(dp_addr);
+            uint16_t ptr_high = m_mmu.read8((dp_addr + 1) & 0xFFFF);
+            uint16_t base_addr = (ptr_high << 8) | ptr_low;
+
+            uint32_t addr = (((DB << 16) | base_addr) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L = m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 6;
+            } else {
+                A.W = m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x3F: { // AND long, X - Logical AND Absolute Long Indexed with X
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = ((addr_bank << 16) | addr_low) + (flag_x ? X.L : X.W);
+            addr &= 0xFFFFFF;
+            if (flag_m) {
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 6;
+            } else {
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0xB6: { // LDX dp, Y - Load Index Register X Direct Page Indexed with Y
+            uint8_t dp_offset = fetch8();
+            uint16_t addr = (D + dp_offset + (flag_x ? Y.L : Y.W)) & 0xFFFF;
+            if (flag_x) {
+                X.L = m_mmu.read8(addr);
+                flag_z = (X.L == 0);
+                flag_n = (X.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                X.W = m_mmu.read16(addr);
+                flag_z = (X.W == 0);
+                flag_n = (X.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x2C: { // BIT abs - Bit Test Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t result = A.L & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x40) != 0;
+                flag_n = (val & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t result = A.W & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x4000) != 0;
+                flag_n = (val & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xF5: { // SBC dp, X - Subtract with Carry Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xFD: { // SBC abs, X - Subtract with Carry Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xB4: { // LDY dp, X - Load Index Register Y Direct Page Indexed with X
+            uint8_t dp_offset = fetch8();
+            uint16_t addr = (D + dp_offset + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_x) {
+                Y.L = m_mmu.read8(addr);
+                flag_z = (Y.L == 0);
+                flag_n = (Y.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                Y.W = m_mmu.read16(addr);
+                flag_z = (Y.W == 0);
+                flag_n = (Y.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xD5: { // CMP dp, X - Compare Accumulator Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x14: { // TRB dp - Test and Reset Bits Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_z = ((A.L & val) == 0);
+                val &= ~A.L;
+                m_mmu.write8(addr, val);
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_z = ((A.W & val) == 0);
+                val &= ~A.W;
+                m_mmu.write16(addr, val);
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x46: { // LSR dp - Logical Shift Right Memory Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_c = (val & 0x01) != 0;
+                val >>= 1;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = false; // Logical shift right always clears N
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_c = (val & 0x0001) != 0;
+                val >>= 1;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = false;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x54: { // MVN - Block Move Negative
+            uint8_t dest_bank = fetch8();
+            uint8_t src_bank = fetch8();
+            DB = dest_bank;
+
+            uint32_t src_addr = (src_bank << 16) | X.W;
+            uint32_t dest_addr = (dest_bank << 16) | Y.W;
+            uint32_t count = (uint32_t)A.W + 1;
+
+            for (uint32_t i = 0; i < count; ++i) {
+                uint8_t val = m_mmu.read8(src_addr);
+                m_mmu.write8(dest_addr, val);
+                src_addr = (src_addr & 0xFF0000) | ((src_addr + 1) & 0xFFFF);
+                dest_addr = (dest_addr & 0xFF0000) | ((dest_addr + 1) & 0xFFFF);
+                X.W = (X.W + 1) & 0xFFFF;
+                Y.W = (Y.W + 1) & 0xFFFF;
+            }
+            A.W = 0xFFFF;
+            cycles = 7 * count;
+            break;
+        }
+        case 0x7D: { // ADC abs, X - Add with Carry Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x75: { // ADC dp, X - Add with Carry Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xE4: { // CPX dp - Compare Index Register X Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_x) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = X.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (X.L >= val);
+                cycles = 3;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = X.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (X.W >= val);
+                cycles = 4;
+            }
+            break;
+        }
+        case 0x04: { // TSB dp - Test and Set Bits Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_z = ((A.L & val) == 0);
+                val |= A.L;
+                m_mmu.write8(addr, val);
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_z = ((A.W & val) == 0);
+                val |= A.W;
+                m_mmu.write16(addr, val);
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x24: { // BIT dp - Bit Test Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t result = A.L & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x40) != 0;
+                flag_n = (val & 0x80) != 0;
+                cycles = 3;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t result = A.W & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x4000) != 0;
+                flag_n = (val & 0x8000) != 0;
+                cycles = 4;
+            }
+            break;
+        }
+        case 0x3D: { // AND abs, X - Logical AND Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x26: { // ROL dp - Rotate Left Memory Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t old_c = flag_c ? 1 : 0;
+                flag_c = (val & 0x80) != 0;
+                val = (val << 1) | old_c;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t old_c = flag_c ? 1 : 0;
+                flag_c = (val & 0x8000) != 0;
+                val = (val << 1) | old_c;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x19: { // ORA abs, Y - Logical OR Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xEA: { // NOP - No Operation
+            cycles = 2;
+            break;
+        }
+        case 0x5D: { // EOR abs, X - Exclusive-OR Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x39: { // AND abs, Y - Logical AND Absolute Indexed with Y
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0xC4: { // CPY dp - Compare Index Register Y Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_x) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = Y.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (Y.L >= val);
+                cycles = 3;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = Y.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (Y.W >= val);
+                cycles = 4;
+            }
+            break;
+        }
+        case 0x1E: { // ASL abs, X - Arithmetic Shift Left Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_c = (val & 0x80) != 0;
+                val <<= 1;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_c = (val & 0x8000) != 0;
+                val <<= 1;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x7E: { // ROR abs, X - Rotate Right Memory Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t old_c = flag_c ? 0x80 : 0;
+                flag_c = (val & 0x01) != 0;
+                val = (val >> 1) | old_c;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t old_c = flag_c ? 0x8000 : 0;
+                flag_c = (val & 0x0001) != 0;
+                val = (val >> 1) | old_c;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x5E: { // LSR abs, X - Logical Shift Right Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_c = (val & 0x01) != 0;
+                val >>= 1;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = false; // Logical shift right always clears N
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_c = (val & 0x0001) != 0;
+                val >>= 1;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = false;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x94: { // STY dp, X - Store Index Register Y Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_x) {
+                m_mmu.write8(addr, Y.L);
+                cycles = 4;
+            } else {
+                m_mmu.write16(addr, Y.W);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x62: { // PER - Push Effective Relative
+            uint16_t offset = fetch16();
+            uint16_t target = (PC + offset) & 0xFFFF;
+            push16(target);
+            cycles = 6;
+            break;
+        }
+        case 0xAF: { // LDA abs, long - Load Accumulator Absolute Long
+            uint32_t addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            if (flag_m) {
+                A.L = m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                A.W = m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x1F: { // ORA abs, long, X - Logical OR Absolute Long Indexed with X
+            uint32_t base_addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            uint32_t addr = (base_addr + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0xD7: { // CMP [dp] - Compare Accumulator Direct Page Indirect Long
+            uint8_t dp_off = fetch8();
+            uint16_t ptr = (D + dp_off) & 0xFFFF;
+            uint32_t addr = m_mmu.read8(ptr) |
+                            (m_mmu.read8((ptr + 1) & 0xFFFF) << 8) |
+                            (static_cast<uint32_t>(m_mmu.read8((ptr + 2) & 0xFFFF)) << 16);
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x55: { // EOR dp, X - Exclusive-OR Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
         default: {
             std::printf("\n--- CRASH: Unimplemented SNES Opcode 0x%02X ---\n", opcode);
             std::printf("At 24-bit Address: %02X:%04X\n", PB, PC - 1);
@@ -1326,5 +2671,28 @@ void SNES_CPU::set_p(uint8_t val) {
     if (flag_e) {
         flag_m = true;
         flag_x = true;
+    }
+}
+
+void SNES_CPU::trigger_nmi() {
+    if (!flag_e) {
+        // Native 65C816 Mode NMI
+        push8(PB);
+        push8((PC >> 8) & 0xFF);
+        push8(PC & 0xFF);
+        push8(get_p());
+        flag_d = false;
+        flag_i = true;
+        PB = 0x00;
+        PC = m_mmu.read16(0x00FFEA); // Native NMI Vector
+    } else {
+        // 6502 Emulation Mode NMI
+        push8((PC >> 8) & 0xFF);
+        push8(PC & 0xFF);
+        push8(get_p() & ~0x10);
+        flag_d = false;
+        flag_i = true;
+        PB = 0x00;
+        PC = m_mmu.read16(0x00FFFA); // Emulation NMI Vector
     }
 }

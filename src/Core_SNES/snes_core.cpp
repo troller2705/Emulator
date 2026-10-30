@@ -16,9 +16,18 @@ void SNESCore::reset() {
 }
 
 void SNESCore::run_frame() {
-    // Basic loop just to test CPU execution limits
-    for (int i = 0; i < 10000; i++) {
-        m_cpu.step();
+    int frame_cpu_cycles = 0;
+    const int target_cycles_per_frame = 35000;
+
+    while (frame_cpu_cycles < target_cycles_per_frame) {
+        int cpu_cycles = m_cpu.step();
+        m_mmu.get_ppu().advance_cycles(cpu_cycles);
+
+        if (m_mmu.poll_nmi()) {
+            m_cpu.trigger_nmi();
+        }
+
+        frame_cpu_cycles += cpu_cycles;
     }
 }
 
@@ -27,7 +36,12 @@ void SNESCore::set_input(uint32_t input_state) {
 }
 
 void SNESCore::step_instruction() {
-    m_cpu.step();
+    int cpu_cycles = m_cpu.step();
+    m_mmu.get_ppu().advance_cycles(cpu_cycles);
+
+    if (m_mmu.poll_nmi()) {
+        m_cpu.trigger_nmi();
+    }
 }
 
 CPUState SNESCore::get_cpu_state() const {

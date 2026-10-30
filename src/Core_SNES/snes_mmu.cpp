@@ -9,6 +9,8 @@ void SNES_MMU::reset() {
     m_wram.fill(0);
     // Initial SPC700 IPL boot handshake state
     m_apu_ports = {0xAA, 0xBB, 0x00, 0x00};
+    m_nmitimen = 0;
+    m_ppu.reset();
 }
 
 bool SNES_MMU::load_rom(const std::vector<uint8_t>& rom_data) {
@@ -112,19 +114,19 @@ uint8_t SNES_MMU::read8(uint32_t addr) {
             // CPU I/O Ports (Timers, Joypads, NMI, etc.)
 
             if (offset == 0x4210) {
-                // NMI Status / VBlank
-                // Bit 7 flags that VBlank has occurred. Reading this register clears the flag.
-                static uint8_t nmi_toggle = 0;
-                nmi_toggle ^= 0x80; // Toggle bit 7 every read to fake PPU timing
-                return nmi_toggle | 0x02; // Bit 1 is the CPU version number (always 2)
+                // Bit 7 flags VBlank NMI and clears on read; Bit 1 is CPU version (2)
+                return (m_ppu.read_nmi_flag() ? 0x80 : 0x00) | 0x02;
             }
 
             if (offset == 0x4212) {
                 // HVBJOY - H/V-Blank and Joypad Auto-Read Status
                 // Bit 7: VBlank, Bit 6: HBlank, Bit 0: Joypad Auto-Read
-                static uint8_t hvbjoy_toggle = 0;
-                hvbjoy_toggle ^= 0xC1; // Toggle VBlank, HBlank, and Joypad bits
-                return hvbjoy_toggle;
+                uint8_t val = 0;
+                if (m_ppu.is_vblank()) {
+                    val |= 0x80;
+                }
+                // Optional simple HBlank flag simulation based on dot position if needed
+                return val;
             }
 
             return 0; // Stub the rest for now
@@ -144,6 +146,45 @@ uint8_t SNES_MMU::read8(uint32_t addr) {
 void SNES_MMU::write8(uint32_t addr, uint8_t val) {
     uint8_t bank   = (addr >> 16) & 0xFF;
     uint16_t offset = addr & 0xFFFF;
+
+    // Map bank 0 or mirrors for PPU registers ($2100 - $213F)
+    if ((addr & 0xFFFFFF) >= 0x002100 && (addr & 0xFFFFFF) <= 0x00213F) {
+        uint8_t reg = addr & 0xFF;
+        switch (reg) {
+            case 0x15: // VRAM Address Increment Designation ($2115)
+                m_ppu.set_vram_increment_mode(val);
+                break;
+            case 0x16: // VRAM Address Low ($2116)
+                m_vram_addr_latch = val;
+                m_ppu.set_vram_address((static_cast<uint16_t>(m_vram_addr_h_latch) << 8) | m_vram_addr_latch);
+                break;
+            case 0x17: // VRAM Address High ($2117)
+                m_vram_addr_h_latch = val;
+                m_ppu.set_vram_address((static_cast<uint16_t>(m_vram_addr_h_latch) << 8) | m_vram_addr_latch);
+                break;
+            case 0x18: { // VRAM Data Write Low ($2118)
+                uint16_t current_addr = m_ppu.get_vram_addr();
+                uint16_t current_val = m_ppu.read_vram(current_addr);
+                m_ppu.write_vram(current_addr, (current_val & 0xFF00) | val);
+                m_ppu.apply_vram_increment();
+                break;
+            }
+            case 0x19: { // VRAM Data Write High ($2119)
+                uint16_t current_addr = m_ppu.get_vram_addr();
+                uint16_t current_val = m_ppu.read_vram(current_addr);
+                m_ppu.write_vram(current_addr, (current_val & 0x00FF) | (static_cast<uint16_t>(val) << 8));
+                m_ppu.apply_vram_increment();
+                break;
+            }
+            case 0x21: // CGRAM Address ($2121)
+                m_ppu.set_cgram_addr(val);
+                break;
+            case 0x22: // CGRAM Data Write ($2122)
+                m_ppu.write_cgram_byte(val);
+                break;
+        }
+        return;
+    }
 
     if (bank == 0x7E || bank == 0x7F) {
         uint32_t wram_addr = ((bank & 1) << 16) | offset;
@@ -165,6 +206,9 @@ void SNES_MMU::write8(uint32_t addr, uint8_t val) {
         }
         if (offset >= 0x4000 && offset <= 0x43FF) {
             // CPU I/O, Joypad, DMA
+            if (offset == 0x4200) {
+                m_nmitimen = val;
+            }
             return;
         }
     }

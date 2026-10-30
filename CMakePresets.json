@@ -24,7 +24,7 @@
     },
     {
       "name": "windows-release-single-exe",
-      "displayName": "Windows Release (MinGW Static)",
+      "displayName": "Windows Release",
       "description": "Statically links runtime and libraries into a standalone .exe using CLion MinGW",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/cmake-build-release-static",

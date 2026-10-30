@@ -18,6 +18,7 @@ public:
 
     void reset();
     int step();
+    void trigger_nmi();
 
     // The 65C816 Register File
     SNES_Register A;  // Accumulator (A is Low, B is High. Combined = C)
@@ -53,4 +54,6 @@ private:
     uint16_t fetch16();
     void    push8(uint8_t val);
     uint8_t pop8();
+
+    void push16(uint16_t val);
 };
