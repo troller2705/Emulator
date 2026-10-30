@@ -1,114 +1,435 @@
 #include "Core_SNES/snes_ppu.h"
-
+#include "Core_Shared/color_utils.h"
+#include <algorithm>
 
 SNES_PPU::SNES_PPU() {
-    m_vram.resize(32 * 1024);   // 64 KB VRAM (32K words)
-    m_oam.resize(544);          // 544 bytes OAM
-    m_cgram.resize(512);        // 512 bytes CGRAM
     reset();
 }
 
 void SNES_PPU::reset() {
-    std::fill(m_vram.begin(), m_vram.end(), 0);
-    std::fill(m_oam.begin(), m_oam.end(), 0);
-    std::fill(m_cgram.begin(), m_cgram.end(), 0);
+    m_vram.fill(0);
+    m_cgram.fill(0);
+    m_oam.fill(0);
+    m_framebuffer.fill(0xFF000000);
+    m_debug_tile_buffer.fill(0xFF000000);
+
+    m_cycle_counter = 0;
     m_scanline = 0;
-    m_dot = 0;
-    m_vblank = false;
-    m_nmi_flag = false;
-    m_nmi_trigger = false;
+    m_in_vblank = false;
+    m_forced_blank = true;
+    m_brightness = 0;
+    m_bg_mode = 0;
+    m_main_screen_mask = 0;
+    m_sub_screen_mask = 0;
+
+    m_vmain = 0;
     m_vram_addr = 0;
-    m_vram_increment_mode = 1;
-    m_vram_increment_value = 1;
+    m_vram_prefetch = 0;
+
     m_cgram_addr = 0;
-    m_cgram_toggle = 0;
     m_cgram_latch = 0;
+    m_cgram_flipflop = false;
+
+    m_oam_addr = 0;
+    m_oam_reload = 0;
+    m_oam_latch = 0;
+    m_oam_flipflop = false;
+
+    for (int i = 0; i < 4; ++i) {
+        m_bg_sc[i] = 0;
+        m_bg_hofs[i] = 0;
+        m_bg_vofs[i] = 0;
+    }
+    m_bg_nba[0] = m_bg_nba[1] = 0;
+    m_bg_scroll_prev = 0;
+    m_obsel = 0;
 }
 
-// VRAM word read
-uint16_t SNES_PPU::read_vram(uint16_t addr) {
-    return m_vram[addr & 0x7FFF];
+uint16_t SNES_PPU::getVramAddressIncrement() const {
+    switch (m_vmain & 0x03) {
+        case 0: return 1;
+        case 1: return 32;
+        case 2:
+        case 3: return 128;
+        default: return 1;
+    }
 }
 
-// VRAM word write
-void SNES_PPU::write_vram(uint16_t addr, uint16_t val) {
-    m_vram[addr & 0x7FFF] = val;
+bool SNES_PPU::advance_cycles(int cpu_cycles) {
+    m_cycle_counter += cpu_cycles;
+    bool entered_vblank = false;
+
+    // ~1364 master cycles per scanline (~227 CPU cycles at ~6 master cycles/CPU cycle)
+    while (m_cycle_counter >= 227) {
+        m_cycle_counter -= 227;
+        if (stepScanline()) {
+            entered_vblank = true;
+        }
+    }
+    return entered_vblank;
 }
 
-void SNES_PPU::set_vram_address(uint16_t addr) {
-    m_vram_addr = addr & 0x7FFF;
+bool SNES_PPU::stepScanline() {
+    if (m_scanline >= 1 && m_scanline <= SCREEN_HEIGHT) {
+        renderScanline(m_scanline - 1);
+    }
+
+    m_scanline++;
+    bool entered_vblank = false;
+
+    if (m_scanline == 225) {
+        m_in_vblank = true;
+        entered_vblank = true;
+        if (!m_forced_blank) {
+            m_oam_addr = m_oam_reload;
+            m_oam_flipflop = false;
+        }
+    } else if (m_scanline >= 262) {
+        m_scanline = 0;
+        m_in_vblank = false;
+    }
+
+    return entered_vblank;
 }
 
-void SNES_PPU::set_vram_increment_mode(uint8_t mode) {
-    // SNES reg $2115 encoding for increments (+1, +32, +128, etc.)
-    static const uint16_t inc_table[] = { 1, 32, 128, 128 };
-    m_vram_increment_value = inc_table[mode & 0x03];
+uint8_t SNES_PPU::readRegister(uint16_t addr) {
+    switch (addr) {
+        case 0x2138: { // RDOAM - OAM Data Read
+            uint8_t data = m_oam[m_oam_addr % 0x220];
+            m_oam_addr = (m_oam_addr + 1) & 0x03FF;
+            return data;
+        }
+        case 0x2139: { // RDVRAML - VRAM Data Read Low
+            uint8_t val = m_vram_prefetch & 0xFF;
+            if ((m_vmain & 0x80) == 0) {
+                uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+                m_vram_prefetch = m_vram[byte_addr] | (m_vram[byte_addr + 1] << 8);
+                m_vram_addr += getVramAddressIncrement();
+            }
+            return val;
+        }
+        case 0x213A: { // RDVRAMH - VRAM Data Read High
+            uint8_t val = (m_vram_prefetch >> 8) & 0xFF;
+            if ((m_vmain & 0x80) != 0) {
+                uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+                m_vram_prefetch = m_vram[byte_addr] | (m_vram[byte_addr + 1] << 8);
+                m_vram_addr += getVramAddressIncrement();
+            }
+            return val;
+        }
+        case 0x213B: { // RDCGRAM - Palette Data Read
+            uint8_t val = 0;
+            if (!m_cgram_flipflop) {
+                val = m_cgram[m_cgram_addr * 2];
+                m_cgram_flipflop = true;
+            } else {
+                val = m_cgram[m_cgram_addr * 2 + 1] & 0x7F;
+                m_cgram_flipflop = false;
+                m_cgram_addr++;
+            }
+            return val;
+        }
+        case 0x213E: return 0x01; // STAT77 - PPU1 Version
+        case 0x213F: return 0x01; // STAT78 - PPU2 Version (NTSC)
+        default:
+            return 0x00;
+    }
 }
 
-void SNES_PPU::apply_vram_increment() {
-    m_vram_addr = (m_vram_addr + m_vram_increment_value) & 0x7FFF;
+void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
+    switch (addr) {
+        case 0x2100: // INIDISP - Screen Display Register
+            m_forced_blank = (val & 0x80) != 0;
+            m_brightness = val & 0x0F;
+            break;
+
+        case 0x2101: // OBSEL - Object Size and Object Base
+            m_obsel = val;
+            break;
+
+        case 0x2102: // OAMADDL
+            m_oam_reload = (m_oam_reload & 0x0200) | (static_cast<uint16_t>(val) << 1);
+            m_oam_addr = m_oam_reload;
+            m_oam_flipflop = false;
+            break;
+
+        case 0x2103: // OAMADDH
+            m_oam_reload = (m_oam_reload & 0x01FE) | ((val & 0x01) << 9);
+            m_oam_addr = m_oam_reload;
+            m_oam_flipflop = false;
+            break;
+
+        case 0x2104: // OAMDATA - OAM Data Write
+            if (m_oam_addr < 0x200) {
+                if (!m_oam_flipflop) {
+                    m_oam_latch = val;
+                } else {
+                    m_oam[m_oam_addr - 1] = m_oam_latch;
+                    m_oam[m_oam_addr] = val;
+                }
+            } else if (m_oam_addr < 0x220) {
+                m_oam[m_oam_addr] = val;
+            }
+            m_oam_addr = (m_oam_addr + 1) & 0x03FF;
+            m_oam_flipflop = !m_oam_flipflop;
+            break;
+
+        case 0x2105: // BGMODE
+            m_bg_mode = val & 0x07;
+            break;
+
+        case 0x2107: case 0x2108: case 0x2109: case 0x210A: // BG1SC - BG4SC
+            m_bg_sc[addr - 0x2107] = val;
+            break;
+
+        case 0x210B: // BG12NBA
+            m_bg_nba[0] = val;
+            break;
+
+        case 0x210C: // BG34NBA
+            m_bg_nba[1] = val;
+            break;
+
+        case 0x210D: case 0x210F: case 0x2111: case 0x2113: { // BG1HOFS - BG4HOFS
+            int idx = (addr - 0x210D) / 2;
+            m_bg_hofs[idx] = ((val << 8) | (m_bg_scroll_prev & ~7) | ((m_bg_hofs[idx] >> 8) & 7)) & 0x03FF;
+            m_bg_scroll_prev = val;
+            break;
+        }
+        case 0x210E: case 0x2110: case 0x2112: case 0x2114: { // BG1VOFS - BG4VOFS
+            int idx = (addr - 0x210E) / 2;
+            m_bg_vofs[idx] = ((val << 8) | m_bg_scroll_prev) & 0x03FF;
+            m_bg_scroll_prev = val;
+            break;
+        }
+
+        case 0x2115: // VMAIN - Video Port Control
+            m_vmain = val;
+            break;
+
+        case 0x2116: // VMADDL - VRAM Address Low
+            m_vram_addr = (m_vram_addr & 0xFF00) | val;
+            break;
+
+        case 0x2117: // VMADDH - VRAM Address High
+            m_vram_addr = (m_vram_addr & 0x00FF) | (static_cast<uint16_t>(val) << 8);
+            break;
+
+        case 0x2118: { // VMDATAL - VRAM Data Write Low
+            uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+            m_vram[byte_addr] = val;
+            if ((m_vmain & 0x80) == 0) {
+                m_vram_addr += getVramAddressIncrement();
+            }
+            break;
+        }
+        case 0x2119: { // VMDATAH - VRAM Data Write High
+            uint32_t byte_addr = ((m_vram_addr << 1) & 0xFFFE) + 1;
+            m_vram[byte_addr] = val;
+            if ((m_vmain & 0x80) != 0) {
+                m_vram_addr += getVramAddressIncrement();
+            }
+            break;
+        }
+
+        case 0x2121: // CGADD - CGRAM Address
+            m_cgram_addr = val;
+            m_cgram_flipflop = false;
+            break;
+
+        case 0x2122: // CGDATA - CGRAM Data Write
+            if (!m_cgram_flipflop) {
+                m_cgram_latch = val;
+                m_cgram_flipflop = true;
+            } else {
+                m_cgram[m_cgram_addr * 2] = m_cgram_latch;
+                m_cgram[m_cgram_addr * 2 + 1] = val & 0x7F;
+                m_cgram_flipflop = false;
+                m_cgram_addr++;
+            }
+            break;
+
+        case 0x212C: // TM - Main Screen Designation
+            m_main_screen_mask = val;
+            break;
+
+        case 0x212D: // TS - Sub Screen Designation
+            m_sub_screen_mask = val;
+            break;
+    }
 }
 
-void SNES_PPU::set_cgram_addr(uint8_t addr) {
-    m_cgram_addr = addr;
-    m_cgram_toggle = 0; // Reset byte toggle on new address write
+uint32_t SNES_PPU::bgr555ToArgb8888(uint16_t bgr555) const {
+    uint8_t r5 = bgr555 & 0x1F;
+    uint8_t g5 = (bgr555 >> 5) & 0x1F;
+    uint8_t b5 = (bgr555 >> 10) & 0x1F;
+
+    uint32_t r = ((r5 << 3) | (r5 >> 2)) * m_brightness / 15;
+    uint32_t g = ((g5 << 3) | (g5 >> 2)) * m_brightness / 15;
+    uint32_t b = ((b5 << 3) | (b5 >> 2)) * m_brightness / 15;
+
+    return 0xFF000000U | (r << 16) | (g << 8) | b;
 }
 
-void SNES_PPU::write_cgram_byte(uint8_t val) {
-    if (m_cgram_toggle == 0) {
-        // Low byte write
-        m_cgram_latch = val;
-        m_cgram_toggle = 1;
+void SNES_PPU::renderScanline(int line) {
+    uint32_t* line_buf = &m_framebuffer[line * SCREEN_WIDTH];
+
+    if (m_forced_blank || m_brightness == 0) {
+        std::fill_n(line_buf, SCREEN_WIDTH, 0xFF000000);
+        return;
+    }
+
+    uint16_t backdrop_bgr = m_cgram[0] | (m_cgram[1] << 8);
+    uint32_t backdrop_argb = bgr555ToArgb8888(backdrop_bgr);
+    std::fill_n(line_buf, SCREEN_WIDTH, backdrop_argb);
+
+    if (m_bg_mode == 1) {
+        if (m_main_screen_mask & 0x04) renderBackgroundLayer(line, 2, 2); // BG3 (2bpp)
+        if (m_main_screen_mask & 0x02) renderBackgroundLayer(line, 1, 4); // BG2 (4bpp)
+        if (m_main_screen_mask & 0x01) renderBackgroundLayer(line, 0, 4); // BG1 (4bpp)
+    } else if (m_bg_mode == 0) {
+        if (m_main_screen_mask & 0x08) renderBackgroundLayer(line, 3, 2);
+        if (m_main_screen_mask & 0x04) renderBackgroundLayer(line, 2, 2);
+        if (m_main_screen_mask & 0x02) renderBackgroundLayer(line, 1, 2);
+        if (m_main_screen_mask & 0x01) renderBackgroundLayer(line, 0, 2);
     } else {
-        // High byte write - combine and write the 16-bit color word to CGRAM
-        uint16_t color_val = m_cgram_latch | (val << 8);
+        if (m_main_screen_mask & 0x02) renderBackgroundLayer(line, 1, 4);
+        if (m_main_screen_mask & 0x01) renderBackgroundLayer(line, 0, 4);
+    }
 
-        // CGRAM has 256 words (512 bytes), address points to color index (0-255)
-        size_t byte_offset = m_cgram_addr * 2;
-        m_cgram[byte_offset]     = color_val & 0xFF;
-        m_cgram[byte_offset + 1] = (color_val >> 8) & 0xFF;
-
-        m_cgram_addr = (m_cgram_addr + 1) & 0xFF; // Auto-increment color index
-        m_cgram_toggle = 0;
+    if (m_main_screen_mask & 0x10) {
+        renderSprites(line);
     }
 }
 
-void SNES_PPU::run_frame() {
-    // Standard NTSC frame timing: 262 scanlines
-    for (m_scanline = 0; m_scanline < 262; ++m_scanline) {
-        // VBlank starts at scanline 225
-        if (m_scanline == 225) {
-            m_vblank = true;
-        }
-        // VBlank ends and active display resumes at scanline 0
-        else if (m_scanline == 0) {
-            m_vblank = false;
-        }
+void SNES_PPU::renderBackgroundLayer(int line, int bg_index, int bpp) {
+    uint32_t* line_buf = &m_framebuffer[line * SCREEN_WIDTH];
 
-        // Simulate dots per scanline (340 dots per scanline)
-        for (m_dot = 0; m_dot < 340; ++m_dot) {
-            // Future dot-level rendering or PPU effects go here
+    uint32_t map_base = (m_bg_sc[bg_index] & 0xFC) << 9;
+    uint8_t nba_reg = (bg_index < 2) ? m_bg_nba[0] : m_bg_nba[1];
+    uint8_t shift = (bg_index & 1) ? 4 : 0;
+    uint32_t tile_base = ((nba_reg >> shift) & 0x0F) << 13;
+
+    int scroll_y = (line + m_bg_vofs[bg_index]) & 0x1FF;
+    int tile_y = (scroll_y / 8) & 0x1F;
+    int fine_y = scroll_y % 8;
+
+    for (int x = 0; x < SCREEN_WIDTH; ++x) {
+        int scroll_x = (x + m_bg_hofs[bg_index]) & 0x1FF;
+        int tile_x = (scroll_x / 8) & 0x1F;
+        int fine_x = scroll_x % 8;
+
+        uint32_t screen_offset = 0;
+        if ((m_bg_sc[bg_index] & 0x01) && ((scroll_x / 256) & 1)) screen_offset += 0x800;
+        if ((m_bg_sc[bg_index] & 0x02) && ((scroll_y / 256) & 1)) screen_offset += (m_bg_sc[bg_index] & 0x01) ? 0x1000 : 0x800;
+
+        uint32_t entry_addr = (map_base + screen_offset + ((tile_y * 32 + tile_x) * 2)) & 0xFFFE;
+        uint16_t entry = m_vram[entry_addr] | (m_vram[entry_addr + 1] << 8);
+
+        uint16_t tile_num = entry & 0x03FF;
+        uint8_t  palette  = (entry >> 10) & 0x07;
+        bool     flip_x   = (entry & 0x4000) != 0;
+        bool     flip_y   = (entry & 0x8000) != 0;
+
+        int row = flip_y ? (7 - fine_y) : fine_y;
+        int bit = flip_x ? fine_x : (7 - fine_x);
+
+        if (bpp == 2) {
+            uint32_t chr_addr = (tile_base + tile_num * 16 + row * 2) & 0xFFFE;
+            uint8_t bp0 = (m_vram[chr_addr] >> bit) & 1;
+            uint8_t bp1 = (m_vram[chr_addr + 1] >> bit) & 1;
+            uint8_t color_idx = bp0 | (bp1 << 1);
+            if (color_idx != 0) {
+                uint8_t cgram_index = (palette * 4) + color_idx;
+                uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
+                line_buf[x] = bgr555ToArgb8888(bgr);
+            }
+        } else if (bpp == 4) {
+            uint32_t chr_addr = (tile_base + tile_num * 32 + row * 2) & 0xFFFE;
+            uint8_t bp0 = (m_vram[chr_addr] >> bit) & 1;
+            uint8_t bp1 = (m_vram[chr_addr + 1] >> bit) & 1;
+            uint8_t bp2 = (m_vram[(chr_addr + 16) & 0xFFFF] >> bit) & 1;
+            uint8_t bp3 = (m_vram[(chr_addr + 17) & 0xFFFF] >> bit) & 1;
+            uint8_t color_idx = bp0 | (bp1 << 1) | (bp2 << 2) | (bp3 << 3);
+            if (color_idx != 0) {
+                uint8_t cgram_index = (palette * 16) + color_idx;
+                uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
+                line_buf[x] = bgr555ToArgb8888(bgr);
+            }
         }
     }
 }
 
-void SNES_PPU::advance_cycles(int cpu_cycles) {
-    int dots = cpu_cycles * 4;
-    m_dot += dots;
+void SNES_PPU::renderSprites(int line) {
+    uint32_t* line_buf = &m_framebuffer[line * SCREEN_WIDTH];
+    uint32_t obj_base = (m_obsel & 0x07) << 14;
 
-    while (m_dot >= 340) {
-        m_dot -= 340;
-        m_scanline++;
+    for (int i = 127; i >= 0; --i) {
+        uint8_t x_low = m_oam[i * 4];
+        uint8_t y_pos = m_oam[i * 4 + 1];
+        uint8_t tile  = m_oam[i * 4 + 2];
+        uint8_t attr  = m_oam[i * 4 + 3];
 
-        if (m_scanline == 225) {
-            m_vblank = true;       // Enter VBlank
-            m_nmi_flag = true;     // Set RDNMI Bit 7
-            m_nmi_trigger = true;  // Signal NMI edge
-        } else if (m_scanline >= 262) {
-            m_scanline = 0;
-            m_vblank = false;      // Exit VBlank
-            m_nmi_flag = false;
-            m_nmi_trigger = false;
+        uint8_t high_bits = (m_oam[0x200 + (i / 4)] >> ((i % 4) * 2)) & 0x03;
+        int x_pos = x_low | ((high_bits & 1) ? -256 : 0);
+
+        if (line < y_pos || line >= y_pos + 8) continue;
+
+        bool flip_x = (attr & 0x40) != 0;
+        bool flip_y = (attr & 0x80) != 0;
+        uint8_t palette = (attr >> 1) & 0x07;
+
+        int row = flip_y ? (7 - (line - y_pos)) : (line - y_pos);
+        uint32_t chr_addr = (obj_base + tile * 32 + row * 2) & 0xFFFE;
+
+        for (int px = 0; px < 8; ++px) {
+            int screen_x = x_pos + px;
+            if (screen_x < 0 || screen_x >= SCREEN_WIDTH) continue;
+
+            int bit = flip_x ? px : (7 - px);
+            uint8_t bp0 = (m_vram[chr_addr] >> bit) & 1;
+            uint8_t bp1 = (m_vram[chr_addr + 1] >> bit) & 1;
+            uint8_t bp2 = (m_vram[(chr_addr + 16) & 0xFFFF] >> bit) & 1;
+            uint8_t bp3 = (m_vram[(chr_addr + 17) & 0xFFFF] >> bit) & 1;
+            uint8_t color_idx = bp0 | (bp1 << 1) | (bp2 << 2) | (bp3 << 3);
+
+            if (color_idx != 0) {
+                uint8_t cgram_index = 128 + (palette * 16) + color_idx;
+                uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
+                line_buf[screen_x] = bgr555ToArgb8888(bgr);
+            }
+        }
+    }
+}
+
+void SNES_PPU::debug_update_tile_buffer() {
+    // Render 384 4bpp tiles (16x24 grid = 128x192 pixels) for the ImGui VRAM Tile Viewer
+    for (int tile = 0; tile < 384; ++tile) {
+        int tile_x = (tile % 16) * 8;
+        int tile_y = (tile / 16) * 8;
+        uint32_t chr_base = (tile * 32) & 0xFFFF;
+
+        for (int row = 0; row < 8; ++row) {
+            uint32_t addr = (chr_base + row * 2) & 0xFFFE;
+            uint8_t bp0 = m_vram[addr];
+            uint8_t bp1 = m_vram[addr + 1];
+            uint8_t bp2 = m_vram[(addr + 16) & 0xFFFF];
+            uint8_t bp3 = m_vram[(addr + 17) & 0xFFFF];
+
+            for (int col = 0; col < 8; ++col) {
+                int bit = 7 - col;
+                uint8_t c_idx = ((bp0 >> bit) & 1) |
+                                (((bp1 >> bit) & 1) << 1) |
+                                (((bp2 >> bit) & 1) << 2) |
+                                (((bp3 >> bit) & 1) << 3);
+
+                uint16_t bgr = m_cgram[c_idx * 2] | (m_cgram[c_idx * 2 + 1] << 8);
+                uint32_t color = (bgr != 0 || c_idx == 0)
+                    ? CoreShared::bgr555_to_argb8888(bgr)
+                    : (0xFF000000U | ((c_idx * 17) << 16) | ((c_idx * 17) << 8) | (c_idx * 17));
+
+                m_debug_tile_buffer[(tile_y + row) * 128 + (tile_x + col)] = color;
+            }
         }
     }
 }

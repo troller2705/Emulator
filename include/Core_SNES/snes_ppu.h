@@ -1,64 +1,85 @@
 #pragma once
 #include <cstdint>
-#include <vector>
+#include <array>
 
 class SNES_PPU {
 public:
+    static constexpr int SCREEN_WIDTH = 256;
+    static constexpr int SCREEN_HEIGHT = 224;
+
     SNES_PPU();
     void reset();
-    void advance_cycles(int cpu_cycles);
 
-    // VRAM Access
-    uint16_t read_vram(uint16_t addr);
-    void write_vram(uint16_t addr, uint16_t val);
+    // Advance PPU clock by CPU cycles; returns true on the exact transition into VBlank (scanline 225)
+    bool advance_cycles(int cpu_cycles);
 
-    void set_vram_address(uint16_t addr);
-    uint16_t get_vram_addr() const { return m_vram_addr; }
-    void set_vram_increment_mode(uint8_t mode);
-    void apply_vram_increment();
+    // Advance PPU by one scanline; returns true when entering VBlank (scanline 225)
+    bool stepScanline();
 
-    // CGRAM Access
-    void set_cgram_addr(uint8_t addr);
-    void write_cgram_byte(uint8_t val);
-    uint8_t read_cgram(uint8_t addr);
+    // B-Bus Register Access ($2100 - $213F)
+    uint8_t readRegister(uint16_t addr);
+    void writeRegister(uint16_t addr, uint8_t val);
 
-    // OAM Access
-    uint8_t read_oam(uint16_t addr);
-    void write_oam(uint16_t addr, uint8_t val);
+    // State getters for CPU / MMU ($4210 / $4212)
+    bool isInVBlank() const { return m_in_vblank; }
+    uint16_t getCurrentScanline() const { return m_scanline; }
+    const uint32_t* getFramebuffer() const { return m_framebuffer.data(); }
 
-    // Timing
-    void run_frame();
-    bool is_vblank() const { return m_vblank; }
-    bool read_nmi_flag() {
-        bool flag = m_nmi_flag;
-        m_nmi_flag = false; // Reading $4210 clears Bit 7 on hardware
-        return flag;
-    }
-    bool poll_nmi_trigger() {
-        if (m_nmi_trigger) {
-            m_nmi_trigger = false;
-            return true;
-        }
-        return false;
-    }
+    // ImGui VRAM Tile Viewer Support (128x192 ARGB8888)
+    void debug_update_tile_buffer();
+    const uint32_t* get_debug_tile_buffer() const { return m_debug_tile_buffer.data(); }
 
 private:
-    std::vector<uint16_t> m_vram;   // 64 KB (32K words)
-    std::vector<uint8_t>  m_oam;    // 544 bytes
-    std::vector<uint8_t>  m_cgram;  // 512 bytes
+    void renderScanline(int line);
+    void renderBackgroundLayer(int line, int bg_index, int bpp);
+    void renderSprites(int line);
+    uint32_t bgr555ToArgb8888(uint16_t bgr555) const;
+    uint16_t getVramAddressIncrement() const;
 
-    int m_scanline;
-    int m_dot;
-    bool m_vblank;
-    bool m_nmi_flag = false;
-    bool m_nmi_trigger = false;
+    // PPU Internal Memory
+    std::array<uint8_t, 0x10000> m_vram{};  // 64 KB Video RAM
+    std::array<uint8_t, 0x200>   m_cgram{}; // 512 Bytes Palette RAM (256 colors)
+    std::array<uint8_t, 0x220>   m_oam{};   // 544 Bytes Object Attribute Memory
 
-    uint16_t m_vram_addr;
-    uint8_t  m_vram_increment_mode;
-    uint16_t m_vram_increment_value;
+    // Output Framebuffers (ARGB8888 to match SDL_PIXELFORMAT_ARGB8888)
+    std::array<uint32_t, SCREEN_WIDTH * SCREEN_HEIGHT> m_framebuffer{};
+    std::array<uint32_t, 128 * 192> m_debug_tile_buffer{};
 
-    // CGRAM internal state
-    uint8_t  m_cgram_addr;
-    uint8_t  m_cgram_toggle;
-    uint8_t  m_cgram_latch;
+    // Timing State
+    int m_cycle_counter = 0;
+    uint16_t m_scanline = 0;
+    bool m_in_vblank = false;
+
+    // Display & Control Registers
+    bool m_forced_blank = true;
+    uint8_t m_brightness = 0x0F;
+    uint8_t m_bg_mode = 0;
+    uint8_t m_main_screen_mask = 0; // $212C (TM)
+    uint8_t m_sub_screen_mask = 0;  // $212D (TS)
+
+    // VRAM Addressing ($2115 - $2119)
+    uint8_t  m_vmain = 0;
+    uint16_t m_vram_addr = 0;
+    uint16_t m_vram_prefetch = 0;
+
+    // CGRAM Addressing ($2121 - $2122)
+    uint8_t m_cgram_addr = 0;
+    uint8_t m_cgram_latch = 0;
+    bool    m_cgram_flipflop = false;
+
+    // OAM Addressing ($2102 - $2104)
+    uint16_t m_oam_addr = 0;
+    uint16_t m_oam_reload = 0;
+    uint8_t  m_oam_latch = 0;
+    bool     m_oam_flipflop = false;
+
+    // Background Configuration ($2107 - $2114)
+    uint8_t  m_bg_sc[4]{};     // Tilemap base and size for BG1-BG4
+    uint16_t m_bg_nba[2]{};    // Tile character data base for BG1/2 and BG3/4
+    uint16_t m_bg_hofs[4]{};   // Horizontal scroll offsets
+    uint16_t m_bg_vofs[4]{};   // Vertical scroll offsets
+    uint8_t  m_bg_scroll_prev = 0;
+
+    // Sprite Configuration ($2101)
+    uint8_t m_obsel = 0;
 };

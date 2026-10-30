@@ -83,10 +83,10 @@ uint32_t InputMapper::map_pad_button_to_mask(Uint8 button) {
         case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    return BTN_RIGHT;
         case SDL_CONTROLLER_BUTTON_START:         return BTN_START;
         case SDL_CONTROLLER_BUTTON_BACK:          return BTN_SELECT;
-        case SDL_CONTROLLER_BUTTON_B:             return BTN_A; // Nintendo-style East = A
-        case SDL_CONTROLLER_BUTTON_A:             return BTN_B; // Nintendo-style South = B
-        case SDL_CONTROLLER_BUTTON_Y:             return BTN_X;
-        case SDL_CONTROLLER_BUTTON_X:             return BTN_Y;
+        case SDL_CONTROLLER_BUTTON_A:             return BTN_A; // Nintendo-style East = A
+        case SDL_CONTROLLER_BUTTON_B:             return BTN_B; // Nintendo-style South = B
+        case SDL_CONTROLLER_BUTTON_X:             return BTN_X;
+        case SDL_CONTROLLER_BUTTON_Y:             return BTN_Y;
         case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  return BTN_L;
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return BTN_R;
         case SDL_CONTROLLER_BUTTON_LEFTSTICK:     return BTN_L3;
