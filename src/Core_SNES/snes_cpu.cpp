@@ -2737,6 +2737,146 @@ int SNES_CPU::step() {
             cycles = 3;
             break;
         }
+        case 0x3E: { // ROL abs, X - Rotate Left Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t old_c = flag_c ? 1 : 0;
+                flag_c = (val & 0x80) != 0;
+                val = (val << 1) | old_c;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 7;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t old_c = flag_c ? 1 : 0;
+                flag_c = (val & 0x8000) != 0;
+                val = (val << 1) | old_c;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 8;
+            }
+            break;
+        }
+        case 0x34: { // BIT dp, X - Bit Test Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t result = A.L & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x40) != 0;
+                flag_n = (val & 0x80) != 0;
+                cycles = 4;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t result = A.W & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x4000) != 0;
+                flag_n = (val & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x16: { // ASL dp, X - Arithmetic Shift Left Memory Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_c = (val & 0x80) != 0;
+                val <<= 1;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_c = (val & 0x8000) != 0;
+                val <<= 1;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x66: { // ROR dp - Rotate Right Memory Direct Page
+            uint16_t addr = (D + fetch8()) & 0xFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t old_c = flag_c ? 0x80 : 0;
+                flag_c = (val & 0x01) != 0;
+                val = (val >> 1) | old_c;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t old_c = flag_c ? 0x8000 : 0;
+                flag_c = (val & 0x0001) != 0;
+                val = (val >> 1) | old_c;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x2E: { // ROL abs - Rotate Left Memory Absolute
+            uint32_t addr = (DB << 16) | fetch16();
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t old_c = flag_c ? 1 : 0;
+                flag_c = (val & 0x80) != 0;
+                val = (val << 1) | old_c;
+                m_mmu.write8(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t old_c = flag_c ? 1 : 0;
+                flag_c = (val & 0x8000) != 0;
+                val = (val << 1) | old_c;
+                m_mmu.write16(addr, val);
+                flag_z = (val == 0);
+                flag_n = (val & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x35: { // AND dp, X - Logical AND Accumulator Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x15: { // ORA dp, X - Logical OR Accumulator Direct Page Indexed with X
+            uint16_t addr = (D + fetch8() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            if (flag_m) {
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 4;
+            } else {
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 5;
+            }
+            break;
+        }
         default: {
             std::printf("\n--- CRASH: Unimplemented SNES Opcode 0x%02X ---\n", opcode);
             std::printf("At 24-bit Address: %02X:%04X\n", PB, PC - 1);

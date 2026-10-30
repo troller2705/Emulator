@@ -24,6 +24,11 @@ void SNES_PPU::reset() {
     m_main_screen_mask = 0;
     m_sub_screen_mask = 0;
 
+    m_w12sel_bg12 = m_w12sel_bg34 = m_w12sel_objcolor = 0;
+    m_w1_left = m_w1_right = m_w2_left = m_w2_right = 0;
+    m_wbgobj_log = m_wcolor_log = 0;
+    m_tmw = m_tsw = 0;
+
     m_cgwsel = 0;
     m_cgadsub = 0;
     m_fixed_r = m_fixed_g = m_fixed_b = 0;
@@ -99,12 +104,12 @@ bool SNES_PPU::stepScanline() {
 
 uint8_t SNES_PPU::readRegister(uint16_t addr) {
     switch (addr) {
-        case 0x2138: { // RDOAM
+        case 0x2138: {
             uint8_t data = m_oam[m_oam_addr % 0x220];
             m_oam_addr = (m_oam_addr + 1) & 0x03FF;
             return data;
         }
-        case 0x2139: { // RDVRAML
+        case 0x2139: {
             uint8_t val = m_vram_prefetch & 0xFF;
             if ((m_vmain & 0x80) == 0) {
                 uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
@@ -113,7 +118,7 @@ uint8_t SNES_PPU::readRegister(uint16_t addr) {
             }
             return val;
         }
-        case 0x213A: { // RDVRAMH
+        case 0x213A: {
             uint8_t val = (m_vram_prefetch >> 8) & 0xFF;
             if ((m_vmain & 0x80) != 0) {
                 uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
@@ -122,7 +127,7 @@ uint8_t SNES_PPU::readRegister(uint16_t addr) {
             }
             return val;
         }
-        case 0x213B: { // RDCGRAM
+        case 0x213B: {
             uint8_t val = 0;
             if (!m_cgram_flipflop) {
                 val = m_cgram[m_cgram_addr * 2];
@@ -142,28 +147,28 @@ uint8_t SNES_PPU::readRegister(uint16_t addr) {
 
 void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
     switch (addr) {
-        case 0x2100: // INIDISP
+        case 0x2100:
             m_forced_blank = (val & 0x80) != 0;
             m_brightness = val & 0x0F;
             break;
 
-        case 0x2101: // OBSEL
+        case 0x2101:
             m_obsel = val;
             break;
 
-        case 0x2102: // OAMADDL
+        case 0x2102:
             m_oam_reload = (m_oam_reload & 0x0200) | (static_cast<uint16_t>(val) << 1);
             m_oam_addr = m_oam_reload;
             m_oam_flipflop = false;
             break;
 
-        case 0x2103: // OAMADDH
+        case 0x2103:
             m_oam_reload = (m_oam_reload & 0x01FE) | ((val & 0x01) << 9);
             m_oam_addr = m_oam_reload;
             m_oam_flipflop = false;
             break;
 
-        case 0x2104: // OAMDATA
+        case 0x2104:
             if (m_oam_addr < 0x200) {
                 if (!m_oam_flipflop) {
                     m_oam_latch = val;
@@ -178,7 +183,7 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             m_oam_flipflop = !m_oam_flipflop;
             break;
 
-        case 0x2105: // BGMODE
+        case 0x2105:
             m_bg_mode = val & 0x07;
             m_bg3_priority = (val & 0x08) != 0;
             m_bg_tile_size = (val >> 4) & 0x0F;
@@ -259,23 +264,26 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             }
             break;
 
-        case 0x212C:
-            m_main_screen_mask = val;
-            break;
+        case 0x2123: m_w12sel_bg12 = val; break;
+        case 0x2124: m_w12sel_bg34 = val; break;
+        case 0x2125: m_w12sel_objcolor = val; break;
+        case 0x2126: m_w1_left = val; break;
+        case 0x2127: m_w1_right = val; break;
+        case 0x2128: m_w2_left = val; break;
+        case 0x2129: m_w2_right = val; break;
+        case 0x212A: m_wbgobj_log = val; break;
+        case 0x212B: m_wcolor_log = val; break;
 
-        case 0x212D:
-            m_sub_screen_mask = val;
-            break;
+        case 0x212C: m_main_screen_mask = val; break;
+        case 0x212D: m_sub_screen_mask = val; break;
 
-        case 0x2130: // CGWSEL
-            m_cgwsel = val;
-            break;
+        case 0x212E: m_tmw = val; break;
+        case 0x212F: m_tsw = val; break;
 
-        case 0x2131: // CGADSUB
-            m_cgadsub = val;
-            break;
+        case 0x2130: m_cgwsel = val; break;
+        case 0x2131: m_cgadsub = val; break;
 
-        case 0x2132: { // COLDATA - Fixed Color Data (R/G/B channels)
+        case 0x2132: {
             uint8_t intensity = val & 0x1F;
             if (val & 0x20) m_fixed_r = intensity;
             if (val & 0x40) m_fixed_g = intensity;
@@ -297,63 +305,174 @@ uint32_t SNES_PPU::bgr555ToArgb8888(uint16_t bgr555) const {
     return 0xFF000000U | (r << 16) | (g << 8) | b;
 }
 
-void SNES_PPU::renderScanline(int line) {
-    uint32_t* line_buf = &m_framebuffer[line * SCREEN_WIDTH];
+bool SNES_PPU::evaluateWindow(int x, uint8_t w12sel, uint8_t logic) const {
+    bool w1_en = (w12sel & 0x02) != 0;
+    bool w1_inv = (w12sel & 0x01) != 0;
+    bool w2_en = (w12sel & 0x08) != 0;
+    bool w2_inv = (w12sel & 0x04) != 0;
 
+    bool w1_match = false, w2_match = false;
+    if (w1_en) {
+        w1_match = (x >= m_w1_left && x <= m_w1_right);
+        if (w1_inv) w1_match = !w1_match;
+    }
+    if (w2_en) {
+        w2_match = (x >= m_w2_left && x <= m_w2_right);
+        if (w2_inv) w2_match = !w2_match;
+    }
+
+    if (!w1_en && !w2_en) return false;
+    if (w1_en && !w2_en) return w1_match;
+    if (!w1_en && w2_en) return w2_match;
+
+    switch (logic) {
+        case 0: return w1_match || w2_match;
+        case 1: return w1_match && w2_match;
+        case 2: return w1_match != w2_match;
+        case 3: return w1_match == w2_match;
+    }
+    return false;
+}
+
+void SNES_PPU::renderScanline(int line) {
     if (m_forced_blank || m_brightness == 0) {
-        std::fill_n(line_buf, SCREEN_WIDTH, 0xFF000000);
+        std::fill_n(&m_framebuffer[line * SCREEN_WIDTH], SCREEN_WIDTH, 0xFF000000);
         return;
     }
 
-    // Backdrop color: CGRAM[0], combined with Fixed Color ($2132) when Color Math / Subscreen backdrop is used
-    uint16_t backdrop_bgr = m_cgram[0] | (m_cgram[1] << 8);
-    uint16_t fixed_bgr    = m_fixed_r | (m_fixed_g << 5) | (m_fixed_b << 10);
-    if (backdrop_bgr == 0 && fixed_bgr != 0) {
-        backdrop_bgr = fixed_bgr;
+    // 1. Evaluate Window Masks for the current scanline
+    bool bg_mask_main[4][256]{};
+    bool bg_mask_sub[4][256]{};
+    bool obj_mask_main[256]{};
+    bool obj_mask_sub[256]{};
+    bool color_mask[256]{};
+
+    for (int x = 0; x < 256; ++x) {
+        bool w_bg1 = evaluateWindow(x, m_w12sel_bg12 & 0x0F, m_wbgobj_log & 0x03);
+        bool w_bg2 = evaluateWindow(x, m_w12sel_bg12 >> 4, (m_wbgobj_log >> 2) & 0x03);
+        bool w_bg3 = evaluateWindow(x, m_w12sel_bg34 & 0x0F, (m_wbgobj_log >> 4) & 0x03);
+        bool w_bg4 = evaluateWindow(x, m_w12sel_bg34 >> 4, (m_wbgobj_log >> 6) & 0x03);
+        bool w_obj = evaluateWindow(x, m_w12sel_objcolor & 0x0F, m_wcolor_log & 0x03);
+        bool w_col = evaluateWindow(x, m_w12sel_objcolor >> 4, (m_wcolor_log >> 2) & 0x03);
+
+        bg_mask_main[0][x] = w_bg1 && (m_tmw & 0x01);
+        bg_mask_main[1][x] = w_bg2 && (m_tmw & 0x02);
+        bg_mask_main[2][x] = w_bg3 && (m_tmw & 0x04);
+        bg_mask_main[3][x] = w_bg4 && (m_tmw & 0x08);
+        obj_mask_main[x]   = w_obj && (m_tmw & 0x10);
+
+        bg_mask_sub[0][x] = w_bg1 && (m_tsw & 0x01);
+        bg_mask_sub[1][x] = w_bg2 && (m_tsw & 0x02);
+        bg_mask_sub[2][x] = w_bg3 && (m_tsw & 0x04);
+        bg_mask_sub[3][x] = w_bg4 && (m_tsw & 0x08);
+        obj_mask_sub[x]   = w_obj && (m_tsw & 0x10);
+
+        color_mask[x] = w_col;
     }
-    uint32_t backdrop_argb = bgr555ToArgb8888(backdrop_bgr);
-    std::fill_n(line_buf, SCREEN_WIDTH, backdrop_argb);
 
-    uint8_t layers = m_main_screen_mask | m_sub_screen_mask;
+    // 2. Initialize Main and Sub buffers with Backdrop
+    uint16_t backdrop_bgr = m_cgram[0] | (m_cgram[1] << 8);
+    m_main_color.fill(backdrop_bgr);
+    m_main_layer.fill(5); // 5 = Backdrop
+    m_sub_color.fill(backdrop_bgr);
+    m_sub_layer.fill(5);
 
+    // 3. Render Layers
     if (m_bg_mode == 1) {
-        // Hardware Mode 1 Priority Order (Back-to-Front):
-        if (layers & 0x04) renderBackgroundLayer(line, 2, 2, 0); // 1. BG3 (Priority 0)
-        if (layers & 0x10) renderSprites(line, 0);               // 2. OBJ (Priority 0)
-        if (!m_bg3_priority && (layers & 0x04)) {
-            renderBackgroundLayer(line, 2, 2, 1);                // 3. BG3 (Priority 1 when BG3_PRIO = 0)
+        renderBackgroundLayer(line, 2, 2, 0, bg_mask_main[2], bg_mask_sub[2]);
+        renderSprites(line, 0, obj_mask_main, obj_mask_sub);
+        if (!m_bg3_priority) {
+            renderBackgroundLayer(line, 2, 2, 1, bg_mask_main[2], bg_mask_sub[2]);
         }
-        if (layers & 0x10) renderSprites(line, 1);               // 4. OBJ (Priority 1)
-        if (layers & 0x02) renderBackgroundLayer(line, 1, 4, 0); // 5. BG2 (Priority 0)
-        if (layers & 0x01) renderBackgroundLayer(line, 0, 4, 0); // 6. BG1 (Priority 0)
-        if (layers & 0x10) renderSprites(line, 2);               // 7. OBJ (Priority 2)
-        if (layers & 0x02) renderBackgroundLayer(line, 1, 4, 1); // 8. BG2 (Priority 1)
-        if (layers & 0x01) renderBackgroundLayer(line, 0, 4, 1); // 9. BG1 (Priority 1)
-        if (layers & 0x10) renderSprites(line, 3);               // 10. OBJ (Priority 3)
-        if (m_bg3_priority && (layers & 0x04)) {
-            renderBackgroundLayer(line, 2, 2, 1);                // 11. BG3 (Priority 1 when BG3_PRIO = 1)
+        renderSprites(line, 1, obj_mask_main, obj_mask_sub);
+        renderBackgroundLayer(line, 1, 4, 0, bg_mask_main[1], bg_mask_sub[1]);
+        renderBackgroundLayer(line, 0, 4, 0, bg_mask_main[0], bg_mask_sub[0]);
+        renderSprites(line, 2, obj_mask_main, obj_mask_sub);
+        renderBackgroundLayer(line, 1, 4, 1, bg_mask_main[1], bg_mask_sub[1]);
+        renderBackgroundLayer(line, 0, 4, 1, bg_mask_main[0], bg_mask_sub[0]);
+        renderSprites(line, 3, obj_mask_main, obj_mask_sub);
+        if (m_bg3_priority) {
+            renderBackgroundLayer(line, 2, 2, 1, bg_mask_main[2], bg_mask_sub[2]);
         }
     } else if (m_bg_mode == 0) {
         for (int prio = 0; prio <= 1; ++prio) {
-            if (layers & 0x08) renderBackgroundLayer(line, 3, 2, prio);
-            if (layers & 0x04) renderBackgroundLayer(line, 2, 2, prio);
-            if (layers & 0x10) renderSprites(line, prio * 2);
-            if (layers & 0x02) renderBackgroundLayer(line, 1, 2, prio);
-            if (layers & 0x01) renderBackgroundLayer(line, 0, 2, prio);
-            if (layers & 0x10) renderSprites(line, prio * 2 + 1);
+            renderBackgroundLayer(line, 3, 2, prio, bg_mask_main[3], bg_mask_sub[3]);
+            renderBackgroundLayer(line, 2, 2, prio, bg_mask_main[2], bg_mask_sub[2]);
+            renderSprites(line, prio * 2, obj_mask_main, obj_mask_sub);
+            renderBackgroundLayer(line, 1, 2, prio, bg_mask_main[1], bg_mask_sub[1]);
+            renderBackgroundLayer(line, 0, 2, prio, bg_mask_main[0], bg_mask_sub[0]);
+            renderSprites(line, prio * 2 + 1, obj_mask_main, obj_mask_sub);
         }
     } else {
         for (int prio = 0; prio <= 1; ++prio) {
-            if (layers & 0x02) renderBackgroundLayer(line, 1, 4, prio);
-            if (layers & 0x10) renderSprites(line, prio * 2);
-            if (layers & 0x01) renderBackgroundLayer(line, 0, 4, prio);
-            if (layers & 0x10) renderSprites(line, prio * 2 + 1);
+            renderBackgroundLayer(line, 1, 4, prio, bg_mask_main[1], bg_mask_sub[1]);
+            renderSprites(line, prio * 2, obj_mask_main, obj_mask_sub);
+            renderBackgroundLayer(line, 0, 4, prio, bg_mask_main[0], bg_mask_sub[0]);
+            renderSprites(line, prio * 2 + 1, obj_mask_main, obj_mask_sub);
         }
+    }
+
+    // 4. Color Math Compositor (CGADSUB / CGWSEL)
+    uint16_t fixed_bgr = m_fixed_r | (m_fixed_g << 5) | (m_fixed_b << 10);
+    bool use_sub = (m_cgwsel & 0x02) != 0;
+    bool math_add = (m_cgadsub & 0x80) == 0;
+    bool half_math = (m_cgadsub & 0x40) != 0;
+    uint8_t math_en_mode = (m_cgwsel >> 4) & 0x03;
+
+    for (int x = 0; x < SCREEN_WIDTH; ++x) {
+        uint16_t color_a = m_main_color[x];
+        uint8_t  layer_a = m_main_layer[x];
+
+        bool math_enabled = false;
+        if (math_en_mode == 0) math_enabled = true;
+        else if (math_en_mode == 1) math_enabled = !color_mask[x];
+        else if (math_en_mode == 2) math_enabled = color_mask[x];
+        else if (math_en_mode == 3) math_enabled = false;
+
+        // Ensure layer_a < 6 so our special Layer 6 (OBJ No Math) skips Color Math
+        if (math_enabled && layer_a < 6 && (m_cgadsub & (1 << layer_a))) {
+
+            uint16_t color_b = fixed_bgr;
+            if (use_sub && m_sub_layer[x] != 5) {
+                color_b = m_sub_color[x];
+            }
+
+            int rA = color_a & 0x1F;
+            int gA = (color_a >> 5) & 0x1F;
+            int bA = (color_a >> 10) & 0x1F;
+
+            int rB = color_b & 0x1F;
+            int gB = (color_b >> 5) & 0x1F;
+            int bB = (color_b >> 10) & 0x1F;
+
+            if (math_add) {
+                rA += rB; gA += gB; bA += bB;
+                if (half_math && use_sub && m_sub_layer[x] != 5) {
+                    rA >>= 1; gA >>= 1; bA >>= 1;
+                }
+                if (rA > 31) rA = 31;
+                if (gA > 31) gA = 31;
+                if (bA > 31) bA = 31;
+            } else {
+                rA -= rB; gA -= gB; bA -= bB;
+                if (half_math && use_sub && m_sub_layer[x] != 5) {
+                    rA >>= 1; gA >>= 1; bA >>= 1;
+                }
+                if (rA < 0) rA = 0;
+                if (gA < 0) gA = 0;
+                if (bA < 0) bA = 0;
+            }
+            color_a = rA | (gA << 5) | (bA << 10);
+        }
+
+        m_framebuffer[line * SCREEN_WIDTH + x] = bgr555ToArgb8888(color_a);
     }
 }
 
-void SNES_PPU::renderBackgroundLayer(int line, int bg_index, int bpp, int target_priority) {
-    uint32_t* line_buf = &m_framebuffer[line * SCREEN_WIDTH];
+void SNES_PPU::renderBackgroundLayer(int line, int bg_index, int bpp, int target_priority, const bool* main_mask, const bool* sub_mask) {
+    bool main_en = (m_main_screen_mask & (1 << bg_index)) != 0;
+    bool sub_en  = (m_sub_screen_mask & (1 << bg_index)) != 0;
+    if (!main_en && !sub_en) return;
 
     uint32_t map_base = (m_bg_sc[bg_index] & 0xFC) << 9;
     uint8_t nba_reg   = (bg_index < 2) ? m_bg_nba[0] : m_bg_nba[1];
@@ -402,43 +521,46 @@ void SNES_PPU::renderBackgroundLayer(int line, int bg_index, int bpp, int target
         int row = flip_y ? (7 - fine_y) : fine_y;
         int bit = flip_x ? fine_x : (7 - fine_x);
 
+        uint8_t color_idx = 0;
         if (bpp == 2) {
             uint32_t chr_addr = (tile_base + tile_num * 16 + row * 2) & 0xFFFE;
             uint8_t bp0 = (m_vram[chr_addr] >> bit) & 1;
             uint8_t bp1 = (m_vram[chr_addr + 1] >> bit) & 1;
-            uint8_t color_idx = bp0 | (bp1 << 1);
-            if (color_idx != 0) {
-                uint8_t cgram_base = (m_bg_mode == 0) ? (bg_index * 32) : 0;
-                uint8_t cgram_index = cgram_base + (palette * 4) + color_idx;
-                uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
-                line_buf[x] = bgr555ToArgb8888(bgr);
-            }
+            color_idx = bp0 | (bp1 << 1);
         } else if (bpp == 4) {
             uint32_t chr_addr = (tile_base + tile_num * 32 + row * 2) & 0xFFFE;
             uint8_t bp0 = (m_vram[chr_addr] >> bit) & 1;
             uint8_t bp1 = (m_vram[chr_addr + 1] >> bit) & 1;
             uint8_t bp2 = (m_vram[(chr_addr + 16) & 0xFFFF] >> bit) & 1;
             uint8_t bp3 = (m_vram[(chr_addr + 17) & 0xFFFF] >> bit) & 1;
-            uint8_t color_idx = bp0 | (bp1 << 1) | (bp2 << 2) | (bp3 << 3);
-            if (color_idx != 0) {
-                uint8_t cgram_index = (palette * 16) + color_idx;
-                uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
-                line_buf[x] = bgr555ToArgb8888(bgr);
-            }
+            color_idx = bp0 | (bp1 << 1) | (bp2 << 2) | (bp3 << 3);
+        }
+
+        if (color_idx != 0) {
+            uint8_t cgram_index = 0;
+            if (bpp == 2) cgram_index = ((m_bg_mode == 0) ? (bg_index * 32) : 0) + (palette * 4) + color_idx;
+            else if (bpp == 4) cgram_index = (palette * 16) + color_idx;
+
+            uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
+            if (main_en && !main_mask[x]) { m_main_color[x] = bgr; m_main_layer[x] = bg_index; }
+            if (sub_en && !sub_mask[x])  { m_sub_color[x]  = bgr; m_sub_layer[x]  = bg_index; }
         }
     }
 }
 
-void SNES_PPU::renderSprites(int line, int target_priority) {
+void SNES_PPU::renderSprites(int line, int target_priority, const bool* main_mask, const bool* sub_mask) {
+    bool main_en = (m_main_screen_mask & 0x10) != 0;
+    bool sub_en  = (m_sub_screen_mask & 0x10) != 0;
+    if (!main_en && !sub_en) return;
+
     static const int small_widths[8]  = { 8,  8,  8, 16, 16, 32, 16, 16};
     static const int small_heights[8] = { 8,  8,  8, 16, 16, 32, 32, 32};
     static const int large_widths[8]  = {16, 32, 64, 32, 64, 64, 32, 32};
     static const int large_heights[8] = {16, 32, 64, 32, 64, 64, 64, 32};
 
-    uint32_t* line_buf  = &m_framebuffer[line * SCREEN_WIDTH];
-    uint32_t obj_base   = (m_obsel & 0x07) << 14;
-    uint32_t obj_select = ((m_obsel >> 3) & 0x03) << 13;
-    uint8_t  size_mode  = (m_obsel >> 5) & 0x07;
+    uint32_t obj_base = (m_obsel & 0x07) << 14;
+    uint32_t name_select_gap = (((m_obsel >> 3) & 0x03) + 1) * 0x2000;
+    uint8_t  size_mode = (m_obsel >> 5) & 0x07;
 
     for (int i = 127; i >= 0; --i) {
         uint8_t x_low = m_oam[i * 4];
@@ -463,7 +585,7 @@ void SNES_PPU::renderSprites(int line, int target_priority) {
         bool flip_x = (attr & 0x40) != 0;
         bool flip_y = (attr & 0x80) != 0;
         uint8_t palette = (attr >> 1) & 0x07;
-        uint32_t table_base = obj_base + ((attr & 0x01) ? obj_select : 0);
+        uint32_t table_base = obj_base + ((attr & 0x01) ? name_select_gap : 0);
 
         int eff_y    = flip_y ? (height - 1 - rel_y) : rel_y;
         int tile_row = eff_y >> 3;
@@ -492,7 +614,12 @@ void SNES_PPU::renderSprites(int line, int target_priority) {
             if (color_idx != 0) {
                 uint8_t cgram_index = 128 + (palette * 16) + color_idx;
                 uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
-                line_buf[screen_x] = bgr555ToArgb8888(bgr);
+
+                // Route to Layer 4 (OBJ with Color Math) or Layer 6 (OBJ without Color Math)
+                uint8_t out_layer = (palette < 4) ? 6 : 4;
+
+                if (main_en && !main_mask[screen_x]) { m_main_color[screen_x] = bgr; m_main_layer[screen_x] = out_layer; }
+                if (sub_en && !sub_mask[screen_x])  { m_sub_color[screen_x]  = bgr; m_sub_layer[screen_x]  = out_layer; }
             }
         }
     }
