@@ -291,6 +291,11 @@ void SNES_MMU::write8(uint32_t addr, uint8_t val) {
             executeDMA(val);
             return;
         }
+        // HDMAEN - H-Blank DMA Enable ($420C)
+        if (offset == 0x420C) {
+            m_hdmaen = val;
+            return;
+        }
 
         // DMA Channel Registers ($4300 - $437F)
         if (offset >= 0x4300 && offset <= 0x437F) {
@@ -350,5 +355,88 @@ void SNES_MMU::executeDMA(uint8_t channel_mask) {
         m_dma_regs[ch][3] = (a1t >> 8) & 0xFF;
         m_dma_regs[ch][5] = 0;
         m_dma_regs[ch][6] = 0;
+    }
+}
+
+void SNES_MMU::initHDMA() {
+    for (int ch = 0; ch < 8; ++ch) {
+        m_hdma_terminated[ch] = false;
+        m_hdma_do_transfer[ch] = false;
+        if (!(m_hdmaen & (1 << ch))) continue;
+
+        uint16_t a1t = m_dma_regs[ch][2] | (m_dma_regs[ch][3] << 8);
+        uint8_t  a1b = m_dma_regs[ch][4];
+        m_hdma_table_addr[ch] = a1t;
+
+        uint8_t line = read8((static_cast<uint32_t>(a1b) << 16) | m_hdma_table_addr[ch]++);
+        if (line == 0) {
+            m_hdma_terminated[ch] = true;
+            continue;
+        }
+        m_hdma_line_counter[ch] = line;
+        m_hdma_do_transfer[ch] = true;
+
+        if (m_dma_regs[ch][0] & 0x40) { // Indirect HDMA
+            uint16_t ind = read16((static_cast<uint32_t>(a1b) << 16) | m_hdma_table_addr[ch]);
+            m_hdma_table_addr[ch] += 2;
+            m_dma_regs[ch][5] = ind & 0xFF;
+            m_dma_regs[ch][6] = (ind >> 8) & 0xFF;
+        }
+    }
+}
+
+void SNES_MMU::stepHDMA() {
+    static const int offsets[8][4] = {
+        {0, 0, 0, 0}, {0, 1, 0, 1}, {0, 0, 0, 0}, {0, 0, 1, 1},
+        {0, 1, 2, 3}, {0, 1, 0, 1}, {0, 0, 0, 0}, {0, 0, 1, 1}
+    };
+    static const int transfer_lengths[8] = {1, 2, 2, 4, 4, 4, 2, 4};
+
+    for (int ch = 0; ch < 8; ++ch) {
+        if (!(m_hdmaen & (1 << ch)) || m_hdma_terminated[ch]) continue;
+
+        uint8_t dmap = m_dma_regs[ch][0];
+        uint8_t bbad = m_dma_regs[ch][1];
+        uint8_t a1b  = m_dma_regs[ch][4];
+        bool indirect = (dmap & 0x40) != 0;
+        uint8_t mode  = dmap & 0x07;
+        int bytes_to_transfer = transfer_lengths[mode];
+
+        if (m_hdma_do_transfer[ch]) {
+            for (int i = 0; i < bytes_to_transfer; ++i) {
+                uint16_t b_addr = 0x2100 | ((bbad + offsets[mode][i]) & 0xFF);
+                uint32_t a_addr = 0;
+                if (indirect) {
+                    uint8_t dasb = m_dma_regs[ch][7];
+                    uint16_t das = m_dma_regs[ch][5] | (m_dma_regs[ch][6] << 8);
+                    a_addr = (static_cast<uint32_t>(dasb) << 16) | das;
+                    das++;
+                    m_dma_regs[ch][5] = das & 0xFF;
+                    m_dma_regs[ch][6] = (das >> 8) & 0xFF;
+                } else {
+                    a_addr = (static_cast<uint32_t>(a1b) << 16) | m_hdma_table_addr[ch]++;
+                }
+                write8(b_addr, read8(a_addr));
+            }
+        }
+
+        m_hdma_line_counter[ch]--;
+        m_hdma_do_transfer[ch] = (m_hdma_line_counter[ch] & 0x80) != 0;
+
+        if ((m_hdma_line_counter[ch] & 0x7F) == 0) {
+            uint8_t next_line = read8((static_cast<uint32_t>(a1b) << 16) | m_hdma_table_addr[ch]++);
+            m_hdma_line_counter[ch] = next_line;
+            if (next_line == 0) {
+                m_hdma_terminated[ch] = true;
+                continue;
+            }
+            m_hdma_do_transfer[ch] = true;
+            if (indirect) {
+                uint16_t ind = read16((static_cast<uint32_t>(a1b) << 16) | m_hdma_table_addr[ch]);
+                m_hdma_table_addr[ch] += 2;
+                m_dma_regs[ch][5] = ind & 0xFF;
+                m_dma_regs[ch][6] = (ind >> 8) & 0xFF;
+            }
+        }
     }
 }

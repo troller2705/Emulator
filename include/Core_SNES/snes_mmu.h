@@ -45,6 +45,9 @@ public:
     void set_joypad_state(uint16_t state) { m_joypad1 = state; }
     void executeDMA(uint8_t channel_mask);
 
+    void initHDMA();
+    void stepHDMA();
+
 private:
     SNES_PPU m_ppu;
     SNES_APU m_apu;
@@ -78,4 +81,10 @@ private:
 
     int32_t map_rom_address(uint8_t bank, uint16_t offset) const;
     int32_t map_sram_address(uint8_t bank, uint16_t offset) const;
+
+    uint8_t  m_hdmaen = 0; // $420C
+    uint16_t m_hdma_table_addr[8]{};
+    uint8_t  m_hdma_line_counter[8]{};
+    bool     m_hdma_do_transfer[8]{};
+    bool     m_hdma_terminated[8]{};
 };

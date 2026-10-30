@@ -18,6 +18,9 @@ void SNES_CPU::reset() {
     DB = 0x00;       // Data Bank starts at 0x00
     D  = 0x0000;     // Direct Page starts at 0
     S.W = 0x01FF;    // Stack pointer starts at 0x01FF in Emulation Mode
+    A.W = 0x0000;
+    X.W = 0x0000;
+    Y.W = 0x0000;
     
     // 2. Fetch the 16-bit Reset Vector from 0x00FFFC
     uint8_t pc_low  = m_mmu.read8(0x00FFFC);
@@ -352,10 +355,12 @@ int SNES_CPU::step() {
         case 0xA8: { // TAY - Transfer Accumulator to Y
             if (flag_x) {
                 Y.L = A.L;
+                Y.H = 0;
                 flag_z = (Y.L == 0);
                 flag_n = (Y.L & 0x80) != 0;
             } else {
-                Y.W = flag_m ? A.L : A.W;
+                // 16-bit Y always receives the full 16-bit C accumulator (A.W), even when M=1!
+                Y.W = A.W;
                 flag_z = (Y.W == 0);
                 flag_n = (Y.W & 0x8000) != 0;
             }
@@ -378,10 +383,12 @@ int SNES_CPU::step() {
         case 0xAA: { // TAX - Transfer Accumulator to X
             if (flag_x) {
                 X.L = A.L;
+                X.H = 0;
                 flag_z = (X.L == 0);
                 flag_n = (X.L & 0x80) != 0;
             } else {
-                X.W = flag_m ? A.L : A.W;
+                // 16-bit X always receives the full 16-bit C accumulator (A.W), even when M=1!
+                X.W = A.W;
                 flag_z = (X.W == 0);
                 flag_n = (X.W & 0x8000) != 0;
             }
@@ -1333,14 +1340,10 @@ int SNES_CPU::step() {
             }
             break;
         }
-        case 0xDC: { // JMP [abs] - Jump Absolute Indirect Long
-            uint16_t ptr_low = fetch16();
-            uint32_t ptr_addr = (DB << 16) | ptr_low;
-
-            // Read the 24-bit target address (16-bit target PC + 8-bit target Bank)
+        case 0xDC: { // JMP [abs] - Jump Absolute Indirect Long (Pointer is in Bank 0x00)
+            uint16_t ptr_addr = fetch16();
             uint16_t target_pc = m_mmu.read16(ptr_addr);
-            uint8_t  target_pb = m_mmu.read8(ptr_addr + 2);
-
+            uint8_t  target_pb = m_mmu.read8((ptr_addr + 2) & 0xFFFF);
             PC = target_pc;
             PB = target_pb;
             cycles = 6;
@@ -1814,10 +1817,10 @@ int SNES_CPU::step() {
             }
             break;
         }
-        case 0xDF: { // CMP long - Compare Accumulator Absolute Long
+        case 0xDF: { // CMP long, X - Compare Accumulator Absolute Long Indexed with X
             uint16_t addr_low = fetch16();
             uint8_t  addr_bank = fetch8();
-            uint32_t addr = (addr_bank << 16) | addr_low;
+            uint32_t addr = (((addr_bank << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
             if (flag_m) {
                 uint8_t val = m_mmu.read8(addr);
                 uint16_t result = A.L - val;
@@ -2633,6 +2636,107 @@ int SNES_CPU::step() {
             }
             break;
         }
+        case 0xCF: { // CMP long - Compare Accumulator Absolute Long
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = (addr_bank << 16) | addr_low;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x6C: { // JMP (abs) - Jump Absolute Indirect (Pointer in Bank 0x00)
+            uint16_t ptr = fetch16();
+            PC = m_mmu.read16(ptr);
+            cycles = 5;
+            break;
+        }
+        case 0x7C: { // JMP (abs, X) - Jump Absolute Indexed Indirect (Pointer in PB)
+            uint16_t offset = (fetch16() + (flag_x ? X.L : X.W)) & 0xFFFF;
+            PC = m_mmu.read16((PB << 16) | offset);
+            cycles = 6;
+            break;
+        }
+        case 0xFC: { // JSR (abs, X) - Jump to Subroutine Absolute Indexed Indirect
+            uint16_t offset = fetch16();
+            uint16_t return_addr = PC - 1;
+            push8((return_addr >> 8) & 0xFF);
+            push8(return_addr & 0xFF);
+            uint16_t ptr = (offset + (flag_x ? X.L : X.W)) & 0xFFFF;
+            PC = m_mmu.read16((PB << 16) | ptr);
+            cycles = 8;
+            break;
+        }
+        case 0x89: { // BIT #imm - Bit Test Immediate (Only affects Z flag!)
+            if (flag_m) {
+                uint8_t imm = fetch8();
+                flag_z = ((A.L & imm) == 0);
+                cycles = 2;
+            } else {
+                uint16_t imm = fetch16();
+                flag_z = ((A.W & imm) == 0);
+                cycles = 3;
+            }
+            break;
+        }
+        case 0x3B: { // TSC - Transfer Stack Pointer to 16-bit Accumulator
+            A.W = S.W;
+            flag_z = (A.W == 0);
+            flag_n = (A.W & 0x8000) != 0;
+            cycles = 2;
+            break;
+        }
+        case 0x7B: { // TDC - Transfer Direct Page to 16-bit Accumulator
+            A.W = D;
+            flag_z = (A.W == 0);
+            flag_n = (A.W & 0x8000) != 0;
+            cycles = 2;
+            break;
+        }
+        case 0xBA: { // TSX - Transfer Stack Pointer to X
+            if (flag_x) {
+                X.L = S.L;
+                X.H = 0;
+                flag_z = (X.L == 0);
+                flag_n = (X.L & 0x80) != 0;
+            } else {
+                X.W = S.W;
+                flag_z = (X.W == 0);
+                flag_n = (X.W & 0x8000) != 0;
+            }
+            cycles = 2;
+            break;
+        }
+        case 0x0B: { // PHD - Push Direct Page
+            push16(D);
+            cycles = 4;
+            break;
+        }
+        case 0x2B: { // PLD - Pull Direct Page
+            uint8_t low = pop8();
+            uint8_t high = pop8();
+            D = (high << 8) | low;
+            flag_z = (D == 0);
+            flag_n = (D & 0x8000) != 0;
+            cycles = 5;
+            break;
+        }
+        case 0xCB: { // WAI - Wait for Interrupt
+            cycles = 3;
+            break;
+        }
         default: {
             std::printf("\n--- CRASH: Unimplemented SNES Opcode 0x%02X ---\n", opcode);
             std::printf("At 24-bit Address: %02X:%04X\n", PB, PC - 1);
@@ -2666,11 +2770,15 @@ void SNES_CPU::set_p(uint8_t val) {
     flag_i = (val & 0x04) != 0;
     flag_z = (val & 0x02) != 0;
     flag_c = (val & 0x01) != 0;
-    
-    // If in emulation mode, Accumulator and Index registers are strictly 8-bit
+
     if (flag_e) {
         flag_m = true;
         flag_x = true;
+    }
+    // Hardware rule: 8-bit index mode (X=1) immediately zeroes X.H and Y.H!
+    if (flag_x) {
+        X.H = 0x00;
+        Y.H = 0x00;
     }
 }
 

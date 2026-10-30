@@ -16,23 +16,29 @@ void SNESCore::reset() {
 
 void SNESCore::run_frame() {
     m_mmu.get_apu().clear_buffer();
+    m_mmu.initHDMA();
 
-    int frame_cpu_cycles = 0;
-    const int target_cycles_per_frame = 262 * 227; // 262 scanlines * ~227 CPU cycles
+    for (int line = 0; line < 262; ++line) {
+        int line_cycles = 0;
+        while (line_cycles < 227) {
+            int cpu_cycles = m_cpu.step();
+            m_mmu.get_apu().step(cpu_cycles);
+            if (m_mmu.poll_nmi()) {
+                m_cpu.trigger_nmi();
+            }
+            line_cycles += cpu_cycles;
+        }
 
-    while (frame_cpu_cycles < target_cycles_per_frame) {
-        int cpu_cycles = m_cpu.step();
+        if (line < 225) {
+            m_mmu.stepHDMA();
+        }
 
-        if (m_mmu.get_ppu().advance_cycles(cpu_cycles)) {
+        if (m_mmu.get_ppu().stepScanline()) {
             m_mmu.notify_vblank_start();
+            if (m_mmu.poll_nmi()) {
+                m_cpu.trigger_nmi();
+            }
         }
-        m_mmu.get_apu().step(cpu_cycles);
-
-        if (m_mmu.poll_nmi()) {
-            m_cpu.trigger_nmi();
-        }
-
-        frame_cpu_cycles += cpu_cycles;
     }
 }
 
