@@ -7,15 +7,28 @@
   },
   "configurePresets": [
     {
-      "name": "windows-debug",
-      "displayName": "Windows Debug",
-      "description": "Standard Debug build for CLion / Visual Studio",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "name": "base-debug",
+      "hidden": true,
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "BUILD_STATIC_EXE": "OFF"
-      },
+      }
+    },
+    {
+      "name": "base-release-static",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_STATIC_EXE": "ON"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "inherits": "base-debug",
+      "displayName": "Windows Debug (Ninja)",
+      "description": "Standard Debug build on Windows using Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -24,22 +37,42 @@
     },
     {
       "name": "windows-release-single-exe",
-      "displayName": "Windows Release",
-      "description": "Statically links runtime and libraries into a standalone .exe using CLion MinGW",
+      "inherits": "base-release-static",
+      "displayName": "Windows Release Single Exe (Ninja)",
+      "description": "Statically links runtime and libraries into a standalone .exe using Ninja",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/cmake-build-release-static",
-      "environment": {
-        "CC": "D:/JetBrains/CLion/bin/mingw/bin/gcc.exe",
-        "CXX": "D:/JetBrains/CLion/bin/mingw/bin/g++.exe",
-        "PATH": "D:/JetBrains/CLion/bin/mingw/bin;$env:PATH"
-      },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "BUILD_STATIC_EXE": "ON",
-        "CMAKE_C_COMPILER": "D:/JetBrains/CLion/bin/mingw/bin/gcc.exe",
-        "CMAKE_CXX_COMPILER": "D:/JetBrains/CLion/bin/mingw/bin/g++.exe",
-        "CMAKE_MAKE_PROGRAM": "D:/JetBrains/CLion/bin/ninja/win/x64/ninja.exe",
-        "CMAKE_TOOLCHAIN_FILE": "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+        "VCPKG_HOST_TRIPLET": "x64-mingw-static"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-make-debug",
+      "inherits": "base-debug",
+      "displayName": "Windows Debug (MinGW Makefiles)",
+      "description": "Standard Debug build on Windows using MinGW Make",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-make-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-make-release",
+      "inherits": "base-release-static",
+      "displayName": "Windows Release Single Exe (MinGW Makefiles)",
+      "description": "Standalone Release build on Windows using MinGW Make",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-make-release",
+      "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
         "VCPKG_HOST_TRIPLET": "x64-mingw-static"
       },
@@ -51,14 +84,11 @@
     },
     {
       "name": "linux-debug",
-      "displayName": "Linux Debug",
-      "description": "Standard Debug build on Linux",
+      "inherits": "base-debug",
+      "displayName": "Linux Debug (Ninja)",
+      "description": "Standard Debug build on Linux using Ninja",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/cmake-build-debug-linux",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "BUILD_STATIC_EXE": "OFF"
-      },
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -67,13 +97,12 @@
     },
     {
       "name": "linux-release-single-exe",
-      "displayName": "Linux Release",
-      "description": "Statically links C++ runtime and vcpkg archives into a single Linux binary",
+      "inherits": "base-release-static",
+      "displayName": "Linux Release Single Exe (Ninja)",
+      "description": "Statically links C++ runtime and libraries on Linux using Ninja",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/cmake-build-release-linux",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "BUILD_STATIC_EXE": "ON",
         "VCPKG_TARGET_TRIPLET": "x64-linux"
       },
       "condition": {
@@ -81,28 +110,128 @@
         "lhs": "${hostSystemName}",
         "rhs": "Linux"
       }
+    },
+    {
+      "name": "linux-make-debug",
+      "inherits": "base-debug",
+      "displayName": "Linux Debug (Unix Makefiles)",
+      "description": "Standard Debug build on Linux using Make",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-make-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-make-release",
+      "inherits": "base-release-static",
+      "displayName": "Linux Release Single Exe (Unix Makefiles)",
+      "description": "Standalone Release build on Linux using Make",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-make-release",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "inherits": "base-debug",
+      "displayName": "macOS Debug (Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-debug-macos",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "macos-make-debug",
+      "inherits": "base-debug",
+      "displayName": "macOS Debug (Unix Makefiles)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-make-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "macos-make-release",
+      "inherits": "base-release-static",
+      "displayName": "macOS Release (Unix Makefiles)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-make-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "windows-debug",
       "configurePreset": "windows-debug",
-      "displayName": "Build Windows Debug"
+      "displayName": "Build Windows Debug (Ninja)"
     },
     {
       "name": "windows-release-single-exe",
       "configurePreset": "windows-release-single-exe",
-      "displayName": "Build Windows Single Exe"
+      "displayName": "Build Windows Single Exe (Ninja)"
+    },
+    {
+      "name": "windows-make-debug",
+      "configurePreset": "windows-make-debug",
+      "displayName": "Build Windows Debug (Make)"
+    },
+    {
+      "name": "windows-make-release",
+      "configurePreset": "windows-make-release",
+      "displayName": "Build Windows Single Exe (Make)"
     },
     {
       "name": "linux-debug",
       "configurePreset": "linux-debug",
-      "displayName": "Build Linux Debug"
+      "displayName": "Build Linux Debug (Ninja)"
     },
     {
       "name": "linux-release-single-exe",
       "configurePreset": "linux-release-single-exe",
-      "displayName": "Build Linux Single Exe"
+      "displayName": "Build Linux Single Exe (Ninja)"
+    },
+    {
+      "name": "linux-make-debug",
+      "configurePreset": "linux-make-debug",
+      "displayName": "Build Linux Debug (Make)"
+    },
+    {
+      "name": "linux-make-release",
+      "configurePreset": "linux-make-release",
+      "displayName": "Build Linux Single Exe (Make)"
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug",
+      "displayName": "Build macOS Debug (Ninja)"
+    },
+    {
+      "name": "macos-make-debug",
+      "configurePreset": "macos-make-debug",
+      "displayName": "Build macOS Debug (Make)"
+    },
+    {
+      "name": "macos-make-release",
+      "configurePreset": "macos-make-release",
+      "displayName": "Build macOS Release (Make)"
     }
   ]
 }

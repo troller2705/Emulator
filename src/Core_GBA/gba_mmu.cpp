@@ -1,7 +1,7 @@
-#include "../../include/Core_GBA/gba_mmu.h"
-#include "../../include/Core_GBA/gba_timer.h"
-#include "../../include/Core_GBA/gba_apu.h"
-#include "../../include/Core_Shared/battery_io.h"
+#include "Core_GBA/gba_mmu.h"
+#include "Core_GBA/gba_timer.h"
+#include "Core_GBA/gba_apu.h"
+#include "Core_Shared/battery_io.h"
 #include <cstring>
 
 GBAMMU::GBAMMU() {

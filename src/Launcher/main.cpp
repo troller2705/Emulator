@@ -69,7 +69,7 @@ std::string load_rom_directory_config() {
         }
     }
     // Default fallback path
-    return "D:/Emulator/ROMs";
+    return "./ROMs";
 }
 
 void save_rom_directory_config(const std::string& path) {

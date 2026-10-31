@@ -1,30 +1,92 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.19)
 
-# Fallback vcpkg toolchain detection if not provided by preset
+# 1. Portable vcpkg auto-detection (checks env vars and standard user paths before local drives)
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
-    if(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "" FORCE)
-    elseif(EXISTS "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "" FORCE)
-    elseif(EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "" FORCE)
-    endif()
+    set(_VCPKG_CANDIDATES
+            "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            "$ENV{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            "$ENV{USERPROFILE}/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            "$ENV{HOME}/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    )
+    foreach(_CANDIDATE IN LISTS _VCPKG_CANDIDATES)
+        if(NOT _CANDIDATE STREQUAL "/scripts/buildsystems/vcpkg.cmake" AND EXISTS "${_CANDIDATE}")
+            set(CMAKE_TOOLCHAIN_FILE "${_CANDIDATE}" CACHE FILEPATH "vcpkg toolchain file" FORCE)
+            message(STATUS "Found vcpkg toolchain: ${_CANDIDATE}")
+            break()
+        endif()
+    endforeach()
 endif()
 
-project(AllInOneEmulator)
-
-if(MINGW)
-    # Statically embed GCC/C++ runtimes without breaking system threading/CRT symbols
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -static-libgcc")
-endif()
+project(AllInOneEmulator LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(SDL2 REQUIRED CONFIG)
-find_package(imgui CONFIG REQUIRED)
+option(BUILD_STATIC_EXE "Statically link runtime and libraries into a standalone executable" OFF)
 
+# 2. Static runtime flags for MinGW / GCC / Clang when requested
+if(MINGW)
+    add_link_options(-static-libgcc -static-libstdc++)
+    if(BUILD_STATIC_EXE)
+        add_link_options(-static)
+    endif()
+elseif(UNIX AND NOT APPLE AND BUILD_STATIC_EXE)
+    add_link_options(-static-libgcc -static-libstdc++)
+endif()
+
+include(FetchContent)
+
+# 3. Locate SDL2 (vcpkg / System Package -> FetchContent fallback)
+find_package(SDL2 CONFIG QUIET)
+if(NOT SDL2_FOUND)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(PC_SDL2 QUIET sdl2)
+    endif()
+endif()
+
+if(NOT SDL2_FOUND AND NOT PC_SDL2_FOUND)
+    message(STATUS "SDL2 not found on system; fetching SDL2 from source...")
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+            SDL2
+            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+            GIT_TAG        release-2.30.9
+            GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(SDL2)
+endif()
+
+# 4. Locate Dear ImGui (vcpkg / System Package -> FetchContent fallback)
+find_package(imgui CONFIG QUIET)
+if(NOT imgui_FOUND)
+    message(STATUS "imgui package not found on system; fetching Dear ImGui from source...")
+    FetchContent_Declare(
+            imgui_src
+            GIT_REPOSITORY https://github.com/ocornut/imgui.git
+            GIT_TAG        v1.91.5
+            GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(imgui_src)
+
+    add_library(imgui STATIC
+            "${imgui_src_SOURCE_DIR}/imgui.cpp"
+            "${imgui_src_SOURCE_DIR}/imgui_demo.cpp"
+            "${imgui_src_SOURCE_DIR}/imgui_draw.cpp"
+            "${imgui_src_SOURCE_DIR}/imgui_tables.cpp"
+            "${imgui_src_SOURCE_DIR}/imgui_widgets.cpp"
+    )
+    target_include_directories(imgui PUBLIC "${imgui_src_SOURCE_DIR}")
+    add_library(imgui::imgui ALIAS imgui)
+endif()
+
+# 5. Emulator Sources
 set(SOURCES
         src/Launcher/main.cpp
         src/Launcher/input_mapper.cpp
@@ -59,12 +121,22 @@ set(SOURCES
 
 add_executable(EmulatorLauncher ${SOURCES})
 
+# Explicitly list include directories (CMake does not expand globs like include/*)
 target_include_directories(EmulatorLauncher PRIVATE include include/*)
 
-# Link SDL2 and vcpkg's target-managed ImGui library safely
-target_link_libraries(EmulatorLauncher
-        PRIVATE
-        $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
-        $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
-        imgui::imgui
-)
+# 6. Link SDL2 and ImGui across any configuration
+if(TARGET SDL2::SDL2 OR TARGET SDL2::SDL2-static)
+    target_link_libraries(EmulatorLauncher PRIVATE
+            $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
+            $<IF:$<BOOL:${BUILD_STATIC_EXE}>,$<IF:$<TARGET_EXISTS:SDL2::SDL2-static>,SDL2::SDL2-static,SDL2::SDL2>,$<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>>
+    )
+    # Ensure both <SDL2/SDL.h> and <SDL.h> resolve cleanly when built via FetchContent
+    if(DEFINED SDL2_SOURCE_DIR)
+        target_include_directories(EmulatorLauncher PRIVATE "${SDL2_SOURCE_DIR}/include")
+    endif()
+elseif(PC_SDL2_FOUND)
+    target_include_directories(EmulatorLauncher PRIVATE ${PC_SDL2_INCLUDE_DIRS})
+    target_link_libraries(EmulatorLauncher PRIVATE ${PC_SDL2_LINK_LIBRARIES})
+endif()
+
+target_link_libraries(EmulatorLauncher PRIVATE imgui::imgui)
