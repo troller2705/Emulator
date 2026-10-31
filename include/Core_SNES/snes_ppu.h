@@ -27,9 +27,12 @@ public:
 private:
     void renderScanline(int line);
     void renderBackgroundLayer(int line, int bg_index, int bpp, int target_priority, const bool* main_mask, const bool* sub_mask);
+    void renderMode7Layer(int line, const bool* main_mask, const bool* sub_mask);
     void renderSprites(int line, int target_priority, const bool* main_mask, const bool* sub_mask);
+
     uint32_t bgr555ToArgb8888(uint16_t bgr555) const;
     uint16_t getVramAddressIncrement() const;
+    uint16_t getTranslatedVramAddress(uint16_t addr) const;
     bool evaluateWindow(int x, uint8_t w12sel, uint8_t logic) const;
 
     // PPU Internal Memory
@@ -99,6 +102,19 @@ private:
     uint16_t m_bg_hofs[4]{};
     uint16_t m_bg_vofs[4]{};
     uint8_t  m_bg_scroll_prev = 0;
+
+    // Mode 7 Affine Registers ($210D - $210E, $211A - $2120, $2134 - $2136)
+    uint8_t  m_m7sel   = 0;
+    int16_t  m_m7a     = 0;
+    int16_t  m_m7b     = 0;
+    int16_t  m_m7c     = 0;
+    int16_t  m_m7d     = 0;
+    int16_t  m_m7x     = 0;
+    int16_t  m_m7y     = 0;
+    int16_t  m_m7hofs  = 0;
+    int16_t  m_m7vofs  = 0;
+    uint8_t  m_m7_prev = 0;
+    int32_t  m_mpy     = 0;
 
     // Sprite Configuration ($2101)
     uint8_t m_obsel = 0;

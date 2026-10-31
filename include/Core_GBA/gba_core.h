@@ -33,6 +33,8 @@ public:
     void debug_update_tile_buffer() override { m_ppu.debug_update_tile_buffer(); }
     const uint32_t* debug_get_tile_buffer() const override { return m_ppu.get_debug_tile_buffer(); }
 
+    bool uses_nintendo_layout() const override { return true; }
+
 private:
     GBAMMU   m_mmu;
     GBACPU   m_cpu;

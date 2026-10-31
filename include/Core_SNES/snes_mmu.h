@@ -48,6 +48,9 @@ public:
     void initHDMA();
     void stepHDMA();
 
+    bool poll_irq() const { return m_irq_flag; }
+    void check_irq(int h_dot, int v_line);
+
 private:
     SNES_PPU m_ppu;
     SNES_APU m_apu;
@@ -87,4 +90,9 @@ private:
     uint8_t  m_hdma_line_counter[8]{};
     bool     m_hdma_do_transfer[8]{};
     bool     m_hdma_terminated[8]{};
+
+    uint16_t m_htime = 0x01FF; // $4207-$4208
+    uint16_t m_vtime = 0x01FF; // $4209-$420A
+    bool m_irq_flag = false;   // $4211
+    bool m_irq_condition_prev = false;
 };

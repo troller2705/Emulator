@@ -19,6 +19,8 @@ public:
     void reset();
     int step();
     void trigger_nmi();
+    void trigger_irq();
+    bool m_waiting_for_interrupt = false;
 
     // The 65C816 Register File
     SNES_Register A;  // Accumulator (A is Low, B is High. Combined = C)

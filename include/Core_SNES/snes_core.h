@@ -30,6 +30,8 @@ public:
     void debug_update_tile_buffer() override { m_mmu.get_ppu().debug_update_tile_buffer(); }
     const uint32_t* debug_get_tile_buffer() const override { return m_mmu.get_ppu().get_debug_tile_buffer(); }
 
+    bool uses_nintendo_layout() const override { return true; }
+
 private:
     SNES_MMU m_mmu;
     SNES_CPU m_cpu;

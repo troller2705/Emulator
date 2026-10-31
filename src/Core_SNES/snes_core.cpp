@@ -20,12 +20,22 @@ void SNESCore::run_frame() {
 
     for (int line = 0; line < 262; ++line) {
         int line_cycles = 0;
-        while (line_cycles < 227) {
+        while (line_cycles < 227) { // 227 CPU cycles per scanline
             int cpu_cycles = m_cpu.step();
+
+            // Calculate approximate H-Dot (0 to ~340) from CPU cycles
+            int h_dot = (line_cycles * 340) / 227;
+            m_mmu.check_irq(h_dot, line);
+
+            if (m_mmu.poll_irq()) {
+                m_cpu.trigger_irq();
+            }
+
             m_mmu.get_apu().step(cpu_cycles);
             if (m_mmu.poll_nmi()) {
                 m_cpu.trigger_nmi();
             }
+
             line_cycles += cpu_cycles;
         }
 

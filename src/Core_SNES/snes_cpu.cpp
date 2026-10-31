@@ -67,6 +67,10 @@ uint8_t SNES_CPU::pop8() {
 }
 
 int SNES_CPU::step() {
+    if (m_waiting_for_interrupt) {
+        return 3; // Burn 3 cycles and halt execution until NMI/IRQ fires
+    }
+
     uint8_t opcode = fetch8();
     int cycles = 2; // Base cycles
 
@@ -2734,6 +2738,7 @@ int SNES_CPU::step() {
             break;
         }
         case 0xCB: { // WAI - Wait for Interrupt
+            m_waiting_for_interrupt = true;
             cycles = 3;
             break;
         }
@@ -2923,6 +2928,7 @@ void SNES_CPU::set_p(uint8_t val) {
 }
 
 void SNES_CPU::trigger_nmi() {
+    m_waiting_for_interrupt = false;
     if (!flag_e) {
         // Native 65C816 Mode NMI
         push8(PB);
@@ -2942,5 +2948,23 @@ void SNES_CPU::trigger_nmi() {
         flag_i = true;
         PB = 0x00;
         PC = m_mmu.read16(0x00FFFA); // Emulation NMI Vector
+    }
+}
+
+void SNES_CPU::trigger_irq() {
+    m_waiting_for_interrupt = false; // IRQ wakes the CPU from WAI
+    if (!flag_i) { // Only execute if interrupts are not masked
+        push8(PB);
+        push8((PC >> 8) & 0xFF);
+        push8(PC & 0xFF);
+        push8(get_p());
+        flag_d = false;
+        flag_i = true;
+        PB = 0x00;
+        if (!flag_e) {
+            PC = m_mmu.read16(0x00FFEE); // Native IRQ Vector
+        } else {
+            PC = m_mmu.read16(0x00FFFE); // Emulation IRQ/BRK Vector
+        }
     }
 }

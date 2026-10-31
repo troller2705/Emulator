@@ -286,6 +286,12 @@ void SNES_MMU::write8(uint32_t addr, uint8_t val) {
             return;
         }
 
+        // HTIME and VTIME Registers ($4207 - $420A)
+        if (offset == 0x4207) { m_htime = (m_htime & 0xFF00) | val; return; }
+        if (offset == 0x4208) { m_htime = (m_htime & 0x00FF) | ((static_cast<uint16_t>(val) & 1) << 8); return; }
+        if (offset == 0x4209) { m_vtime = (m_vtime & 0xFF00) | val; return; }
+        if (offset == 0x420A) { m_vtime = (m_vtime & 0x00FF) | ((static_cast<uint16_t>(val) & 1) << 8); return; }
+
         // MDMAEN - Trigger General Purpose DMA ($420B)
         if (offset == 0x420B) {
             executeDMA(val);
@@ -439,4 +445,23 @@ void SNES_MMU::stepHDMA() {
             }
         }
     }
+}
+
+void SNES_MMU::check_irq(int h_dot, int v_line) {
+    uint8_t mode = (m_nmitimen >> 4) & 0x03;
+    if (mode == 0) {
+        m_irq_condition_prev = false;
+        return;
+    }
+
+    bool condition = false;
+    if (mode == 1) condition = (h_dot >= m_htime); // Triggers every scanline at HTIME
+    else if (mode == 2) condition = (v_line == m_vtime); // Triggers at start of VTIME line
+    else if (mode == 3) condition = (v_line == m_vtime && h_dot >= m_htime); // Triggers once
+
+    // Edge-triggered IRQ prevents firing multiple times on the same line/dot
+    if (condition && !m_irq_condition_prev) {
+        m_irq_flag = true;
+    }
+    m_irq_condition_prev = condition;
 }

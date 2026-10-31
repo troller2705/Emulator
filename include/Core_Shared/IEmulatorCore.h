@@ -50,4 +50,6 @@ public:
 
     virtual void debug_update_tile_buffer() = 0;
     virtual const uint32_t* debug_get_tile_buffer() const = 0;
+
+    virtual bool uses_nintendo_layout() const { return false; }
 };

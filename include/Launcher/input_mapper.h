@@ -43,6 +43,10 @@ public:
     InputMapper();
     ~InputMapper();
 
+    // Toggle between Standard (South=A, East=B) and Nintendo (East=A, South=B) mapping
+    void set_nintendo_layout(bool enabled);
+    bool is_nintendo_layout() const { return m_nintendo_layout; }
+
     // Processes SDL keyboard, controller button, and hotplug events.
     // Returns true if Escape was pressed to toggle the launcher UI.
     bool process_event(const SDL_Event& event, bool ignore_keyboard);
@@ -51,9 +55,10 @@ public:
     uint32_t get_input_state();
 
 private:
-    uint32_t m_key_state  = 0;
+    uint32_t m_key_state   = 0;
     uint32_t m_pad_buttons = 0;
     uint32_t m_pad_axes    = 0;
+    bool     m_nintendo_layout = false;
 
     static constexpr int16_t STICK_DEADZONE   = 8000;
     static constexpr int16_t TRIGGER_DEADZONE = 8000;
@@ -65,5 +70,5 @@ private:
     void update_analog_axes();
 
     static uint32_t map_key_to_mask(SDL_Keycode key);
-    static uint32_t map_pad_button_to_mask(Uint8 button);
+    uint32_t map_pad_button_to_mask(Uint8 button) const;
 };

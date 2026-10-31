@@ -185,6 +185,8 @@ int main(int argc, char* argv[]) {
     int current_tex_w = GB_WIDTH;
     int current_tex_h = GB_HEIGHT;
 
+    InputMapper input_mapper;
+
     auto launch_rom = [&](const std::string& path, CoreType core_choice) {
         if (core && !current_save_path.empty()) {
             core->save_battery(current_save_path);
@@ -239,6 +241,7 @@ int main(int argc, char* argv[]) {
         new_core->load_battery(current_save_path);
 
         core = std::move(new_core);
+        input_mapper.set_nintendo_layout(core->uses_nintendo_layout());
         is_paused = false;
         show_launcher = false;
         return true;
@@ -251,8 +254,6 @@ int main(int argc, char* argv[]) {
     const int FRAME_DELAY = 1000 / TARGET_FPS;
     uint32_t frame_start;
     int frame_time;
-
-    InputMapper input_mapper;
 
     while (is_running) {
         frame_start = SDL_GetTicks();

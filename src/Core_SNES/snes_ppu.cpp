@@ -16,6 +16,7 @@ void SNES_PPU::reset() {
     m_cycle_counter = 0;
     m_scanline = 0;
     m_in_vblank = false;
+
     m_forced_blank = true;
     m_brightness = 0;
     m_bg_mode = 0;
@@ -53,6 +54,19 @@ void SNES_PPU::reset() {
     }
     m_bg_nba[0] = m_bg_nba[1] = 0;
     m_bg_scroll_prev = 0;
+
+    m_m7sel   = 0;
+    m_m7a     = 0;
+    m_m7b     = 0;
+    m_m7c     = 0;
+    m_m7d     = 0;
+    m_m7x     = 0;
+    m_m7y     = 0;
+    m_m7hofs  = 0;
+    m_m7vofs  = 0;
+    m_m7_prev = 0;
+    m_mpy     = 0;
+
     m_obsel = 0;
 }
 
@@ -66,10 +80,19 @@ uint16_t SNES_PPU::getVramAddressIncrement() const {
     }
 }
 
+uint16_t SNES_PPU::getTranslatedVramAddress(uint16_t addr) const {
+    switch ((m_vmain >> 2) & 0x03) {
+        case 0: return addr;
+        case 1: return (addr & 0xFF00) | ((addr & 0x001F) << 3) | ((addr >> 5) & 0x07);
+        case 2: return (addr & 0xFE00) | ((addr & 0x003F) << 3) | ((addr >> 6) & 0x07);
+        case 3: return (addr & 0xFC00) | ((addr & 0x007F) << 3) | ((addr >> 7) & 0x07);
+        default: return addr;
+    }
+}
+
 bool SNES_PPU::advance_cycles(int cpu_cycles) {
     m_cycle_counter += cpu_cycles;
     bool entered_vblank = false;
-
     while (m_cycle_counter >= 227) {
         m_cycle_counter -= 227;
         if (stepScanline()) {
@@ -104,6 +127,9 @@ bool SNES_PPU::stepScanline() {
 
 uint8_t SNES_PPU::readRegister(uint16_t addr) {
     switch (addr) {
+        case 0x2134: return static_cast<uint8_t>(m_mpy & 0xFF);
+        case 0x2135: return static_cast<uint8_t>((m_mpy >> 8) & 0xFF);
+        case 0x2136: return static_cast<uint8_t>((m_mpy >> 16) & 0xFF);
         case 0x2138: {
             uint8_t data = m_oam[m_oam_addr % 0x220];
             m_oam_addr = (m_oam_addr + 1) & 0x03FF;
@@ -112,7 +138,8 @@ uint8_t SNES_PPU::readRegister(uint16_t addr) {
         case 0x2139: {
             uint8_t val = m_vram_prefetch & 0xFF;
             if ((m_vmain & 0x80) == 0) {
-                uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+                uint16_t trans_addr = getTranslatedVramAddress(m_vram_addr);
+                uint32_t byte_addr = (trans_addr << 1) & 0xFFFE;
                 m_vram_prefetch = m_vram[byte_addr] | (m_vram[byte_addr + 1] << 8);
                 m_vram_addr += getVramAddressIncrement();
             }
@@ -121,7 +148,8 @@ uint8_t SNES_PPU::readRegister(uint16_t addr) {
         case 0x213A: {
             uint8_t val = (m_vram_prefetch >> 8) & 0xFF;
             if ((m_vmain & 0x80) != 0) {
-                uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+                uint16_t trans_addr = getTranslatedVramAddress(m_vram_addr);
+                uint32_t byte_addr = (trans_addr << 1) & 0xFFFE;
                 m_vram_prefetch = m_vram[byte_addr] | (m_vram[byte_addr + 1] << 8);
                 m_vram_addr += getVramAddressIncrement();
             }
@@ -151,23 +179,19 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             m_forced_blank = (val & 0x80) != 0;
             m_brightness = val & 0x0F;
             break;
-
         case 0x2101:
             m_obsel = val;
             break;
-
         case 0x2102:
             m_oam_reload = (m_oam_reload & 0x0200) | (static_cast<uint16_t>(val) << 1);
             m_oam_addr = m_oam_reload;
             m_oam_flipflop = false;
             break;
-
         case 0x2103:
             m_oam_reload = (m_oam_reload & 0x01FE) | ((val & 0x01) << 9);
             m_oam_addr = m_oam_reload;
             m_oam_flipflop = false;
             break;
-
         case 0x2104:
             if (m_oam_addr < 0x200) {
                 if (!m_oam_flipflop) {
@@ -182,56 +206,64 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             m_oam_addr = (m_oam_addr + 1) & 0x03FF;
             m_oam_flipflop = !m_oam_flipflop;
             break;
-
         case 0x2105:
             m_bg_mode = val & 0x07;
             m_bg3_priority = (val & 0x08) != 0;
             m_bg_tile_size = (val >> 4) & 0x0F;
             break;
-
         case 0x2107: case 0x2108: case 0x2109: case 0x210A:
             m_bg_sc[addr - 0x2107] = val;
             break;
-
         case 0x210B:
             m_bg_nba[0] = val;
             break;
-
         case 0x210C:
             m_bg_nba[1] = val;
             break;
-
-        case 0x210D: case 0x210F: case 0x2111: case 0x2113: {
+        case 0x210D:
+            m_m7hofs = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            m_bg_hofs[0] = ((val << 8) | (m_bg_scroll_prev & ~7) | ((m_bg_hofs[0] >> 8) & 7)) & 0x03FF;
+            m_bg_scroll_prev = val;
+            break;
+        case 0x210E:
+            m_m7vofs = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            m_bg_vofs[0] = ((val << 8) | m_bg_scroll_prev) & 0x03FF;
+            m_bg_scroll_prev = val;
+            break;
+        case 0x210F: case 0x2111: case 0x2113: {
             int idx = (addr - 0x210D) / 2;
             m_bg_hofs[idx] = ((val << 8) | (m_bg_scroll_prev & ~7) | ((m_bg_hofs[idx] >> 8) & 7)) & 0x03FF;
             m_bg_scroll_prev = val;
             break;
         }
-        case 0x210E: case 0x2110: case 0x2112: case 0x2114: {
+        case 0x2110: case 0x2112: case 0x2114: {
             int idx = (addr - 0x210E) / 2;
             m_bg_vofs[idx] = ((val << 8) | m_bg_scroll_prev) & 0x03FF;
             m_bg_scroll_prev = val;
             break;
         }
-
         case 0x2115:
             m_vmain = val;
             break;
-
         case 0x2116: {
             m_vram_addr = (m_vram_addr & 0xFF00) | val;
-            uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+            uint16_t trans_addr = getTranslatedVramAddress(m_vram_addr);
+            uint32_t byte_addr = (trans_addr << 1) & 0xFFFE;
             m_vram_prefetch = m_vram[byte_addr] | (m_vram[byte_addr + 1] << 8);
             break;
         }
         case 0x2117: {
             m_vram_addr = (m_vram_addr & 0x00FF) | (static_cast<uint16_t>(val) << 8);
-            uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+            uint16_t trans_addr = getTranslatedVramAddress(m_vram_addr);
+            uint32_t byte_addr = (trans_addr << 1) & 0xFFFE;
             m_vram_prefetch = m_vram[byte_addr] | (m_vram[byte_addr + 1] << 8);
             break;
         }
         case 0x2118: {
-            uint32_t byte_addr = (m_vram_addr << 1) & 0xFFFE;
+            uint16_t trans_addr = getTranslatedVramAddress(m_vram_addr);
+            uint32_t byte_addr = (trans_addr << 1) & 0xFFFE;
             m_vram[byte_addr] = val;
             if ((m_vmain & 0x80) == 0) {
                 m_vram_addr += getVramAddressIncrement();
@@ -239,19 +271,47 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             break;
         }
         case 0x2119: {
-            uint32_t byte_addr = ((m_vram_addr << 1) & 0xFFFE) + 1;
+            uint16_t trans_addr = getTranslatedVramAddress(m_vram_addr);
+            uint32_t byte_addr = ((trans_addr << 1) & 0xFFFE) + 1;
             m_vram[byte_addr] = val;
             if ((m_vmain & 0x80) != 0) {
                 m_vram_addr += getVramAddressIncrement();
             }
             break;
         }
-
+        case 0x211A:
+            m_m7sel = val;
+            break;
+        case 0x211B:
+            m_m7a = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            m_mpy = static_cast<int32_t>(m_m7a) * static_cast<int32_t>(static_cast<int8_t>(m_m7b >> 8));
+            break;
+        case 0x211C:
+            m_m7b = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            m_mpy = static_cast<int32_t>(m_m7a) * static_cast<int32_t>(static_cast<int8_t>(val));
+            break;
+        case 0x211D:
+            m_m7c = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            break;
+        case 0x211E:
+            m_m7d = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            break;
+        case 0x211F:
+            m_m7x = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            break;
+        case 0x2120:
+            m_m7y = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
+            m_m7_prev = val;
+            break;
         case 0x2121:
             m_cgram_addr = val;
             m_cgram_flipflop = false;
             break;
-
         case 0x2122:
             if (!m_cgram_flipflop) {
                 m_cgram_latch = val;
@@ -263,7 +323,6 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
                 m_cgram_addr++;
             }
             break;
-
         case 0x2123: m_w12sel_bg12 = val; break;
         case 0x2124: m_w12sel_bg34 = val; break;
         case 0x2125: m_w12sel_objcolor = val; break;
@@ -273,16 +332,12 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
         case 0x2129: m_w2_right = val; break;
         case 0x212A: m_wbgobj_log = val; break;
         case 0x212B: m_wcolor_log = val; break;
-
         case 0x212C: m_main_screen_mask = val; break;
         case 0x212D: m_sub_screen_mask = val; break;
-
         case 0x212E: m_tmw = val; break;
         case 0x212F: m_tsw = val; break;
-
         case 0x2130: m_cgwsel = val; break;
         case 0x2131: m_cgadsub = val; break;
-
         case 0x2132: {
             uint8_t intensity = val & 0x1F;
             if (val & 0x20) m_fixed_r = intensity;
@@ -378,7 +433,13 @@ void SNES_PPU::renderScanline(int line) {
     m_sub_layer.fill(5);
 
     // 3. Render Layers
-    if (m_bg_mode == 1) {
+    if (m_bg_mode == 7) {
+        renderSprites(line, 0, obj_mask_main, obj_mask_sub);
+        renderMode7Layer(line, bg_mask_main[0], bg_mask_sub[0]);
+        renderSprites(line, 1, obj_mask_main, obj_mask_sub);
+        renderSprites(line, 2, obj_mask_main, obj_mask_sub);
+        renderSprites(line, 3, obj_mask_main, obj_mask_sub);
+    } else if (m_bg_mode == 1) {
         renderBackgroundLayer(line, 2, 2, 0, bg_mask_main[2], bg_mask_sub[2]);
         renderSprites(line, 0, obj_mask_main, obj_mask_sub);
         if (!m_bg3_priority) {
@@ -431,7 +492,6 @@ void SNES_PPU::renderScanline(int line) {
 
         // Ensure layer_a < 6 so our special Layer 6 (OBJ No Math) skips Color Math
         if (math_enabled && layer_a < 6 && (m_cgadsub & (1 << layer_a))) {
-
             uint16_t color_b = fixed_bgr;
             if (use_sub && m_sub_layer[x] != 5) {
                 color_b = m_sub_color[x];
@@ -462,10 +522,87 @@ void SNES_PPU::renderScanline(int line) {
                 if (gA < 0) gA = 0;
                 if (bA < 0) bA = 0;
             }
+
             color_a = rA | (gA << 5) | (bA << 10);
         }
 
         m_framebuffer[line * SCREEN_WIDTH + x] = bgr555ToArgb8888(color_a);
+    }
+}
+
+void SNES_PPU::renderMode7Layer(int line, const bool* main_mask, const bool* sub_mask) {
+    bool main_en = (m_main_screen_mask & 0x01) != 0;
+    bool sub_en  = (m_sub_screen_mask & 0x01) != 0;
+    if (!main_en && !sub_en) return;
+
+    auto sign_extend_13 = [](int16_t val) -> int32_t {
+        return (val & 0x1000) ? (val | ~0x1FFF) : (val & 0x1FFF);
+    };
+
+    auto clip_11 = [](int32_t val) -> int32_t {
+        return (val & 0x2000) ? (val | ~0x03FF) : (val & 0x03FF);
+    };
+
+    int32_t hofs = sign_extend_13(m_m7hofs);
+    int32_t vofs = sign_extend_13(m_m7vofs);
+    int32_t cx   = sign_extend_13(m_m7x);
+    int32_t cy   = sign_extend_13(m_m7y);
+
+    int32_t a = m_m7a;
+    int32_t b = m_m7b;
+    int32_t c = m_m7c;
+    int32_t d = m_m7d;
+
+    int screen_y = (m_m7sel & 0x02) ? (255 - line) : line;
+    uint8_t screen_over = (m_m7sel >> 6) & 0x03;
+
+    int32_t x_base = ((a * clip_11(hofs - cx)) & ~63) +
+                     ((b * clip_11(vofs - cy)) & ~63) +
+                     ((b * screen_y) & ~63) +
+                     (cx << 8);
+
+    int32_t y_base = ((c * clip_11(hofs - cx)) & ~63) +
+                     ((d * clip_11(vofs - cy)) & ~63) +
+                     ((d * screen_y) & ~63) +
+                     (cy << 8);
+
+    for (int x = 0; x < SCREEN_WIDTH; ++x) {
+        int screen_x = (m_m7sel & 0x01) ? (255 - x) : x;
+
+        int32_t vram_x = (x_base + a * screen_x) >> 8;
+        int32_t vram_y = (y_base + c * screen_x) >> 8;
+
+        bool use_tile_zero = false;
+        if (screen_over == 0 || screen_over == 1) {
+            vram_x &= 0x3FF;
+            vram_y &= 0x3FF;
+        } else {
+            if (vram_x < 0 || vram_x >= 1024 || vram_y < 0 || vram_y >= 1024) {
+                if (screen_over == 2) {
+                    continue; // Transparent outside 1024x1024 area
+                }
+                use_tile_zero = true; // Fill with Tile 0
+            }
+        }
+
+        uint8_t tile_id = 0;
+        if (!use_tile_zero) {
+            int tile_x = (vram_x >> 3) & 0x7F;
+            int tile_y = (vram_y >> 3) & 0x7F;
+            uint32_t map_addr = ((tile_y * 128 + tile_x) * 2) & 0xFFFE;
+            tile_id = m_vram[map_addr];
+        }
+
+        int fine_x = vram_x & 7;
+        int fine_y = vram_y & 7;
+        uint32_t chr_addr = ((tile_id * 64 + fine_y * 8 + fine_x) * 2 + 1) & 0xFFFF;
+        uint8_t color_idx = m_vram[chr_addr];
+
+        if (color_idx != 0) {
+            uint16_t bgr = m_cgram[color_idx * 2] | (m_cgram[color_idx * 2 + 1] << 8);
+            if (main_en && !main_mask[x]) { m_main_color[x] = bgr; m_main_layer[x] = 0; }
+            if (sub_en && !sub_mask[x])  { m_sub_color[x]  = bgr; m_sub_layer[x]  = 0; }
+        }
     }
 }
 
@@ -614,10 +751,8 @@ void SNES_PPU::renderSprites(int line, int target_priority, const bool* main_mas
             if (color_idx != 0) {
                 uint8_t cgram_index = 128 + (palette * 16) + color_idx;
                 uint16_t bgr = m_cgram[cgram_index * 2] | (m_cgram[cgram_index * 2 + 1] << 8);
-
                 // Route to Layer 4 (OBJ with Color Math) or Layer 6 (OBJ without Color Math)
                 uint8_t out_layer = (palette < 4) ? 6 : 4;
-
                 if (main_en && !main_mask[screen_x]) { m_main_color[screen_x] = bgr; m_main_layer[screen_x] = out_layer; }
                 if (sub_en && !sub_mask[screen_x])  { m_sub_color[screen_x]  = bgr; m_sub_layer[screen_x]  = out_layer; }
             }

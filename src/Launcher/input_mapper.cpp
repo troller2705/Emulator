@@ -4,11 +4,21 @@
 using namespace EmulatorInput;
 
 InputMapper::InputMapper() {
+    // Force positional button mapping in SDL so physical South is always BUTTON_A
+    // and physical East is always BUTTON_B regardless of controller brand.
+    SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
     open_all_controllers();
 }
 
 InputMapper::~InputMapper() {
     close_all_controllers();
+}
+
+void InputMapper::set_nintendo_layout(bool enabled) {
+    if (m_nintendo_layout != enabled) {
+        m_nintendo_layout = enabled;
+        m_pad_buttons = 0; // Clear latched face buttons on layout switch
+    }
 }
 
 void InputMapper::open_all_controllers() {
@@ -59,11 +69,11 @@ uint32_t InputMapper::map_key_to_mask(SDL_Keycode key) {
         case SDLK_3:         return BTN_L3;
         case SDLK_4:         return BTN_R3;
 
-        // Left Stick Keyboard Emulation (Numpad 8/2/4/6)
-        case SDLK_w:      return BTN_LS_UP;
-        case SDLK_s:      return BTN_LS_DOWN;
-        case SDLK_a:      return BTN_LS_LEFT;
-        case SDLK_d:      return BTN_LS_RIGHT;
+        // Left Stick Keyboard Emulation (W/S/A/D)
+        case SDLK_w:         return BTN_LS_UP;
+        case SDLK_s:         return BTN_LS_DOWN;
+        case SDLK_a:         return BTN_LS_LEFT;
+        case SDLK_d:         return BTN_LS_RIGHT;
 
         // Right Stick Keyboard Emulation (I/K/J/L)
         case SDLK_i:         return BTN_RS_UP;
@@ -75,7 +85,7 @@ uint32_t InputMapper::map_key_to_mask(SDL_Keycode key) {
     }
 }
 
-uint32_t InputMapper::map_pad_button_to_mask(Uint8 button) {
+uint32_t InputMapper::map_pad_button_to_mask(Uint8 button) const {
     switch (button) {
         case SDL_CONTROLLER_BUTTON_DPAD_UP:       return BTN_UP;
         case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     return BTN_DOWN;
@@ -83,10 +93,13 @@ uint32_t InputMapper::map_pad_button_to_mask(Uint8 button) {
         case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    return BTN_RIGHT;
         case SDL_CONTROLLER_BUTTON_START:         return BTN_START;
         case SDL_CONTROLLER_BUTTON_BACK:          return BTN_SELECT;
-        case SDL_CONTROLLER_BUTTON_A:             return BTN_A; // Nintendo-style East = A
-        case SDL_CONTROLLER_BUTTON_B:             return BTN_B; // Nintendo-style South = B
-        case SDL_CONTROLLER_BUTTON_X:             return BTN_X;
-        case SDL_CONTROLLER_BUTTON_Y:             return BTN_Y;
+
+        // Face Buttons: Normal (South=A, East=B, West=X, North=Y) vs Nintendo Inverse (East=A, South=B, North=X, West=Y)
+        case SDL_CONTROLLER_BUTTON_A:             return m_nintendo_layout ? BTN_B : BTN_A; // Physical South
+        case SDL_CONTROLLER_BUTTON_B:             return m_nintendo_layout ? BTN_A : BTN_B; // Physical East
+        case SDL_CONTROLLER_BUTTON_X:             return m_nintendo_layout ? BTN_Y : BTN_X; // Physical West
+        case SDL_CONTROLLER_BUTTON_Y:             return m_nintendo_layout ? BTN_X : BTN_Y; // Physical North
+
         case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  return BTN_L;
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return BTN_R;
         case SDL_CONTROLLER_BUTTON_LEFTSTICK:     return BTN_L3;

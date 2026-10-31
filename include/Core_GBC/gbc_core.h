@@ -48,4 +48,6 @@ public:
 
     void debug_update_tile_buffer() override;
     const uint32_t* debug_get_tile_buffer() const override;
+
+    bool uses_nintendo_layout() const override { return true; }
 };
