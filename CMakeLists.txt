@@ -1,23 +1,27 @@
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.10)
 
-# 1. Portable vcpkg auto-detection (checks env vars and standard user paths before local drives)
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
-    set(_VCPKG_CANDIDATES
-            "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-            "$ENV{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
-            "$ENV{USERPROFILE}/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
-            "$ENV{HOME}/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
-            "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-            "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
-            "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    )
-    foreach(_CANDIDATE IN LISTS _VCPKG_CANDIDATES)
-        if(NOT _CANDIDATE STREQUAL "/scripts/buildsystems/vcpkg.cmake" AND EXISTS "${_CANDIDATE}")
-            set(CMAKE_TOOLCHAIN_FILE "${_CANDIDATE}" CACHE FILEPATH "vcpkg toolchain file" FORCE)
-            message(STATUS "Found vcpkg toolchain: ${_CANDIDATE}")
-            break()
-        endif()
-    endforeach()
+# Bypass vcpkg on MinGW to force building SDL2 & ImGui from source with your exact GCC 15+ compiler
+if(MINGW)
+    set(CMAKE_TOOLCHAIN_FILE "" CACHE INTERNAL "")
+    message(STATUS "MinGW detected: Bypassing vcpkg to ensure ABI compatibility with GCC.")
+else()
+    # Standard vcpkg detection for MSVC / Linux if not provided
+    if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
+        set(_VCPKG_CANDIDATES
+                "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+                "$ENV{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
+                "$ENV{USERPROFILE}/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                "$ENV{HOME}/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                "D:/.vcpkg-clion/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        )
+        foreach(_CANDIDATE IN LISTS _VCPKG_CANDIDATES)
+            if(EXISTS "${_CANDIDATE}")
+                set(CMAKE_TOOLCHAIN_FILE "${_CANDIDATE}" CACHE FILEPATH "vcpkg toolchain" FORCE)
+                break()
+            endif()
+        endforeach()
+    endif()
 endif()
 
 project(AllInOneEmulator LANGUAGES C CXX)
@@ -31,9 +35,6 @@ option(BUILD_STATIC_EXE "Statically link runtime and libraries into a standalone
 # 2. Static runtime flags for MinGW / GCC / Clang when requested
 if(MINGW)
     add_link_options(-static-libgcc -static-libstdc++)
-    if(BUILD_STATIC_EXE)
-        add_link_options(-static)
-    endif()
 elseif(UNIX AND NOT APPLE AND BUILD_STATIC_EXE)
     add_link_options(-static-libgcc -static-libstdc++)
 endif()
