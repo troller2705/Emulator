@@ -917,6 +917,60 @@ int SNES_CPU::step() {
             }
             break;
         }
+        case 0x92: { // STA (dp) - Store Accumulator Direct Page Indirect
+            uint16_t dp_addr = (D + fetch8()) & 0xFFFF;
+            uint16_t target_low = m_mmu.read16(dp_addr);
+            uint32_t addr = (DB << 16) | target_low;
+            if (flag_m) {
+                m_mmu.write8(addr, A.L);
+                cycles = 5;
+            } else {
+                m_mmu.write16(addr, A.W);
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x96: { // STX dp, Y - Store X Direct Page Indexed with Y
+            uint16_t addr = (D + fetch8() + (flag_x ? Y.L : Y.W)) & 0xFFFF;
+            if (flag_x) {
+                m_mmu.write8(addr, X.L);
+                cycles = 4;
+            } else {
+                m_mmu.write16(addr, X.W);
+                cycles = 5;
+            }
+            break;
+        }
+        case 0x81: { // STA (dp, X) - Store Accumulator Direct Page Indexed Indirect
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset + (flag_x ? X.L : X.W)) & 0xFFFF;
+            uint16_t target_low = m_mmu.read16(dp_addr);
+            uint32_t addr = (DB << 16) | target_low;
+            if (flag_m) {
+                m_mmu.write8(addr, A.L);
+                cycles = 6;
+            } else {
+                m_mmu.write16(addr, A.W);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x91: { // STA (dp), Y - Store Accumulator Direct Page Indirect Indexed with Y
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+            uint16_t ptr_low = m_mmu.read8(dp_addr);
+            uint16_t ptr_high = m_mmu.read8((dp_addr + 1) & 0xFFFF);
+            uint16_t base_addr = (ptr_high << 8) | ptr_low;
+            uint32_t addr = (((DB << 16) | base_addr) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                m_mmu.write8(addr, A.L);
+                cycles = 6;
+            } else {
+                m_mmu.write16(addr, A.W);
+                cycles = 7;
+            }
+            break;
+        }
         case 0x9E: { // STZ abs, X - Store Zero Absolute Indexed with X
             uint16_t addr_low = fetch16();
             uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
@@ -1707,6 +1761,145 @@ int SNES_CPU::step() {
                 flag_z = (A.W == 0);
                 flag_n = (A.W & 0x8000) != 0;
                 cycles = 5;
+            }
+            break;
+        }
+        case 0x0F: { // ORA long - Logical OR Absolute Long
+            uint32_t addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            if (flag_m) {
+                A.L |= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                A.W |= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x2F: { // AND long - Logical AND Absolute Long
+            uint32_t addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            if (flag_m) {
+                A.L &= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                A.W &= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x4F: { // EOR long - Exclusive OR Absolute Long
+            uint32_t addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0x5F: { // EOR long, X - Exclusive OR Absolute Long Indexed with X
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = ((addr_bank << 16) | addr_low) + (flag_x ? X.L : X.W);
+            addr &= 0xFFFFFF;
+            if (flag_m) {
+                A.L ^= m_mmu.read8(addr);
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 6;
+            } else {
+                A.W ^= m_mmu.read16(addr);
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x6F: { // ADC long - Add with Carry Absolute Long
+            uint32_t addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.L ^ val) & (A.L ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W + val + (flag_c ? 1 : 0);
+                flag_v = (~(A.W ^ val) & (A.W ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0xEF: { // SBC long - Subtract with Carry Absolute Long
+            uint32_t addr = fetch8() | (fetch8() << 8) | (static_cast<uint32_t>(fetch8()) << 16);
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 6;
+            }
+            break;
+        }
+        case 0xFF: { // SBC long, X - Subtract with Carry Absolute Long Indexed with X
+            uint16_t addr_low = fetch16();
+            uint8_t  addr_bank = fetch8();
+            uint32_t addr = ((addr_bank << 16) | addr_low) + (flag_x ? X.L : X.W);
+            addr &= 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t op2 = val ^ 0xFF;
+                uint16_t result = A.L + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.L ^ result) & (op2 ^ result) & 0x80) != 0;
+                flag_c = (result > 0xFF);
+                A.L = result & 0xFF;
+                flag_z = (A.L == 0);
+                flag_n = (A.L & 0x80) != 0;
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t op2 = val ^ 0xFFFF;
+                uint32_t result = A.W + op2 + (flag_c ? 1 : 0);
+                flag_v = ((A.W ^ result) & (op2 ^ result) & 0x8000) != 0;
+                flag_c = (result > 0xFFFF);
+                A.W = result & 0xFFFF;
+                flag_z = (A.W == 0);
+                flag_n = (A.W & 0x8000) != 0;
+                cycles = 7;
             }
             break;
         }
@@ -2602,12 +2795,83 @@ int SNES_CPU::step() {
             }
             break;
         }
-        case 0xD7: { // CMP [dp] - Compare Accumulator Direct Page Indirect Long
+        case 0xC1: { // CMP (dp, X) - Compare Accumulator Direct Page Indexed Indirect
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset + (flag_x ? X.L : X.W)) & 0xFFFF;
+            uint16_t ptr_low = m_mmu.read8(dp_addr);
+            uint16_t ptr_high = m_mmu.read8((dp_addr + 1) & 0xFFFF);
+            uint32_t addr = (DB << 16) | (ptr_low | (ptr_high << 8));
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0xD1: { // CMP (dp), Y - Compare Accumulator Direct Page Indirect Indexed with Y
+            uint8_t dp_offset = fetch8();
+            uint16_t dp_addr = (D + dp_offset) & 0xFFFF;
+            uint16_t ptr_low = m_mmu.read8(dp_addr);
+            uint16_t ptr_high = m_mmu.read8((dp_addr + 1) & 0xFFFF);
+            uint16_t base_addr = (ptr_high << 8) | ptr_low;
+            uint32_t addr = (((DB << 16) | base_addr) + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 6;
+            }
+            break;
+        }
+        case 0xC7: { // CMP [dp] - Compare Accumulator Direct Page Indirect Long
             uint8_t dp_off = fetch8();
             uint16_t ptr = (D + dp_off) & 0xFFFF;
             uint32_t addr = m_mmu.read8(ptr) |
                             (m_mmu.read8((ptr + 1) & 0xFFFF) << 8) |
                             (static_cast<uint32_t>(m_mmu.read8((ptr + 2) & 0xFFFF)) << 16);
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint16_t result = A.L - val;
+                flag_z = ((result & 0xFF) == 0);
+                flag_n = (result & 0x80) != 0;
+                flag_c = (A.L >= val);
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint32_t result = A.W - val;
+                flag_z = ((result & 0xFFFF) == 0);
+                flag_n = (result & 0x8000) != 0;
+                flag_c = (A.W >= val);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0xD7: { // CMP [dp], Y - Compare Accumulator Direct Page Indirect Long Indexed with Y
+            uint8_t dp_off = fetch8();
+            uint16_t ptr = (D + dp_off) & 0xFFFF;
+            uint32_t base_addr = m_mmu.read8(ptr) |
+                                 (m_mmu.read8((ptr + 1) & 0xFFFF) << 8) |
+                                 (static_cast<uint32_t>(m_mmu.read8((ptr + 2) & 0xFFFF)) << 16);
+            uint32_t addr = (base_addr + (flag_x ? Y.L : Y.W)) & 0xFFFFFF;
             if (flag_m) {
                 uint8_t val = m_mmu.read8(addr);
                 uint16_t result = A.L - val;
@@ -2879,6 +3143,68 @@ int SNES_CPU::step() {
                 flag_z = (A.W == 0);
                 flag_n = (A.W & 0x8000) != 0;
                 cycles = 5;
+            }
+            break;
+        }
+        case 0x0C: { // TSB abs - Test and Set Bits Absolute
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (DB << 16) | addr_low;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_z = ((A.L & val) == 0);
+                val |= A.L;
+                m_mmu.write8(addr, val);
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_z = ((A.W & val) == 0);
+                val |= A.W;
+                m_mmu.write16(addr, val);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0x1C: { // TRB abs - Test and Reset Bits Absolute
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (DB << 16) | addr_low;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                flag_z = ((A.L & val) == 0);
+                val &= ~A.L;
+                m_mmu.write8(addr, val);
+                cycles = 6;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                flag_z = ((A.W & val) == 0);
+                val &= ~A.W;
+                m_mmu.write16(addr, val);
+                cycles = 7;
+            }
+            break;
+        }
+        case 0xF4: { // PEA abs - Push Effective Absolute Address
+            uint16_t val = fetch16();
+            push16(val);
+            cycles = 5;
+            break;
+        }
+        case 0x3C: { // BIT abs, X - Bit Test Absolute Indexed with X
+            uint16_t addr_low = fetch16();
+            uint32_t addr = (((DB << 16) | addr_low) + (flag_x ? X.L : X.W)) & 0xFFFFFF;
+            if (flag_m) {
+                uint8_t val = m_mmu.read8(addr);
+                uint8_t result = A.L & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x40) != 0;
+                flag_n = (val & 0x80) != 0;
+                cycles = 5;
+            } else {
+                uint16_t val = m_mmu.read16(addr);
+                uint16_t result = A.W & val;
+                flag_z = (result == 0);
+                flag_v = (val & 0x4000) != 0;
+                flag_n = (val & 0x8000) != 0;
+                cycles = 6;
             }
             break;
         }

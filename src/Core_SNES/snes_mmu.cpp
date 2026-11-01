@@ -1,7 +1,11 @@
 #include "Core_SNES/snes_mmu.h"
+
+#include <algorithm>
+
 #include "Core_Shared/battery_io.h"
 #include <iostream>
 #include <cstring>
+#include <cmath>
 
 SNES_MMU::SNES_MMU() {
     reset();
@@ -26,6 +30,7 @@ void SNES_MMU::reset() {
 
     m_ppu.reset();
     m_apu.reset();
+    m_dsp1.reset();
 }
 
 bool SNES_MMU::load_rom(const std::vector<uint8_t>& rom_data) {
@@ -173,9 +178,12 @@ uint8_t SNES_MMU::read8(uint32_t addr) {
             m_nmi_flag = false;
             return val;
         }
+
         // TIMEUP - IRQ Flag ($4211)
         if (offset == 0x4211) {
-            return 0x00;
+            uint8_t val = m_irq_flag ? 0x80 : 0x00;
+            m_irq_flag = false; // Reading this register clears the flag!
+            return val;
         }
         // HVBJOY - VBlank / HBlank / Auto-Joypad Status ($4212)
         if (offset == 0x4212) {
@@ -194,6 +202,11 @@ uint8_t SNES_MMU::read8(uint32_t addr) {
         // DMA Channel Registers ($4300 - $437F)
         if (offset >= 0x4300 && offset <= 0x437F) {
             return m_dma_regs[(offset >> 4) & 7][offset & 0x0F];
+        }
+
+        // Delegate to DSP-1 Coprocessor
+        if (offset >= 0x6000 && offset <= 0x7FFF) {
+            return m_dsp1.read(offset);
         }
     }
 
@@ -264,6 +277,11 @@ void SNES_MMU::write8(uint32_t addr, uint8_t val) {
             if (!was_enabled && (val & 0x80) && m_nmi_flag) {
                 m_nmi_pending = true;
             }
+            if ((val & 0x30) == 0) {
+                m_irq_flag = false;
+                m_irq_pending = false;
+                m_irq_condition_prev = false;
+            }
             return;
         }
 
@@ -306,6 +324,12 @@ void SNES_MMU::write8(uint32_t addr, uint8_t val) {
         // DMA Channel Registers ($4300 - $437F)
         if (offset >= 0x4300 && offset <= 0x437F) {
             m_dma_regs[(offset >> 4) & 7][offset & 0x0F] = val;
+            return;
+        }
+
+        // Delegate to DSP-1 Coprocessor
+        if (offset >= 0x6000 && offset <= 0x7FFF) {
+            m_dsp1.write(offset, val);
             return;
         }
     }
@@ -451,17 +475,409 @@ void SNES_MMU::check_irq(int h_dot, int v_line) {
     uint8_t mode = (m_nmitimen >> 4) & 0x03;
     if (mode == 0) {
         m_irq_condition_prev = false;
+        m_irq_flag = false;
+        m_irq_pending = false;
         return;
     }
 
     bool condition = false;
-    if (mode == 1) condition = (h_dot >= m_htime); // Triggers every scanline at HTIME
-    else if (mode == 2) condition = (v_line == m_vtime); // Triggers at start of VTIME line
-    else if (mode == 3) condition = (v_line == m_vtime && h_dot >= m_htime); // Triggers once
+    if (mode == 1)      condition = (h_dot >= m_htime);
+    else if (mode == 2) condition = (v_line == m_vtime);
+    else if (mode == 3) condition = (v_line == m_vtime && h_dot >= m_htime);
 
-    // Edge-triggered IRQ prevents firing multiple times on the same line/dot
+    // Edge-triggered IRQ: set TIMEUP flag ($4211) and signal CPU once
     if (condition && !m_irq_condition_prev) {
         m_irq_flag = true;
+        m_irq_pending = true;
     }
     m_irq_condition_prev = condition;
+}
+
+// --- DSP-1 High-Level Emulation ---
+
+void SNES_DSP1::reset() {
+    m_cmd = 0;
+    m_waiting_for_command = true;
+    m_high_byte_toggle = false;
+    m_low_latch = 0;
+    m_in_count = 0;
+    m_in_expect = 0;
+    m_out_count = 0;
+    m_out_expect = 0;
+    m_in.fill(0);
+    m_out.fill(0);
+    std::memset(m_matrix, 0, sizeof(m_matrix));
+    m_fx = m_fy = m_fz = 0;
+    m_lfe = m_les = 0;
+    m_aas = m_azs = 0;
+    m_vof = m_vva = 0;
+    m_cx = m_cy = 0;
+    m_raster_vs = 0;
+}
+
+void SNES_DSP1::generate_next_raster_line() {
+    constexpr double PI = 3.14159265358979323846;
+    auto to_rad = [](int16_t a) -> double { return static_cast<double>(a) * PI / 32768.0; };
+
+    m_out_count = 0;
+    m_out_expect = 0;
+
+    // Distance below the horizon line (in screen pixels)
+    int32_t py = static_cast<int32_t>(m_raster_vs) - static_cast<int32_t>(m_vof);
+    if (py == 0) py = 1;
+
+    double rad_a = to_rad(static_cast<int16_t>(m_aas));
+    double rad_z = to_rad(static_cast<int16_t>(m_azs));
+    double sin_a = std::sin(rad_a), cos_a = std::cos(rad_a);
+    double sin_z = std::sin(rad_z), cos_z = std::cos(rad_z);
+
+    // Authentic DSP-1 Op 0x0A Raster formula:
+    // M = (Fz * cos(A) - Lfe * sin(A)) / (vs - vof)
+    // In 8.8 fixed point, 1.0 = 256, which is already the scale of Fz / py!
+    double scale = (static_cast<double>(m_fz) * cos_a - static_cast<double>(m_lfe) * sin_a) / static_cast<double>(py);
+    if (scale < 0.0) scale = -scale; // Ensure positive forward projection below horizon
+
+    int16_t m7a = static_cast<int16_t>(std::clamp( scale * cos_z, -32768.0, 32767.0));
+    int16_t m7b = static_cast<int16_t>(std::clamp( scale * sin_z, -32768.0, 32767.0));
+    int16_t m7c = static_cast<int16_t>(std::clamp(-scale * sin_z, -32768.0, 32767.0));
+    int16_t m7d = static_cast<int16_t>(std::clamp( scale * cos_z, -32768.0, 32767.0));
+
+    push_out16(m7a);
+    push_out16(m7b);
+    push_out16(m7c);
+    push_out16(m7d);
+
+    m_raster_vs++;
+}
+
+uint8_t SNES_DSP1::read(uint16_t addr) {
+    // In HiROM ($6000-$7FFF), A12 ($1000) selects Status Register ($7000-$7FFF) vs Data Register ($6000-$6FFF)
+    if (addr & 0x1000) {
+        return 0x80; // Bit 7 = RQM (Request for Master / Ready)
+    }
+
+    if (m_out_count < m_out_expect) {
+        uint8_t val = m_out[m_out_count++];
+        if (m_out_count >= m_out_expect) {
+            if (m_cmd == 0x0A || m_cmd == 0x1A) {
+                // Op 0x0A/0x1A streams consecutive scanlines indefinitely until a new command is written!
+                generate_next_raster_line();
+            } else {
+                m_out_count = 0;
+                m_out_expect = 0;
+                m_waiting_for_command = true;
+            }
+        }
+        return val;
+    }
+    return 0x00;
+}
+
+void SNES_DSP1::write(uint16_t addr, uint8_t val) {
+    // Ignore writes to the read-only Status Register ($7000-$7FFF)
+    if (addr & 0x1000) return;
+
+    // If we are currently in the middle of reading output (e.g. continuous Op 0x0A),
+    // any new write to the Data Register aborts the output stream and starts a new command
+    if (!m_waiting_for_command && m_in_count >= m_in_expect && m_out_expect > 0) {
+        if ((m_cmd == 0x0A || m_cmd == 0x1A) && m_out_count == 0) {
+            // In Op 0x0A, Super Mario Kart writes 0x8000 to terminate continuous raster mode
+            if (!m_high_byte_toggle) {
+                m_low_latch = val;
+                m_high_byte_toggle = true;
+                return;
+            } else {
+                m_high_byte_toggle = false;
+                uint16_t word = m_low_latch | (static_cast<uint16_t>(val) << 8);
+                if (word == 0x8000) {
+                    m_out_count = 0;
+                    m_out_expect = 0;
+                    m_waiting_for_command = true;
+                    return;
+                }
+                // Otherwise, treat the low byte as a new command!
+                val = m_low_latch;
+                addr &= ~1;
+                m_waiting_for_command = true;
+            }
+        } else {
+            m_out_count = 0;
+            m_out_expect = 0;
+            m_waiting_for_command = true;
+        }
+    }
+
+    if (m_waiting_for_command) {
+        if (addr & 1) return; // Ignore high byte of a 16-bit command write
+
+        m_cmd = val & 0x3F;
+        m_in_count = 0;
+        m_out_count = 0;
+        m_out_expect = 0;
+        m_high_byte_toggle = false;
+
+        switch (m_cmd) {
+            case 0x00: m_in_expect = 2; break; // Multiply (K, I) -> 1 word
+            case 0x10: m_in_expect = 2; break; // Inverse (A, B) -> 2 words
+            case 0x04: m_in_expect = 2; break; // Sin/Cos (Angle, Radius) -> 2 words
+            case 0x08: m_in_expect = 3; break; // Vector Size (X, Y, Z) -> 1 word
+            case 0x18: m_in_expect = 4; break; // Vector Range (X, Y, Z, R) -> 1 word
+            case 0x28: m_in_expect = 3; break; // Vector Abs (X, Y, Z) -> 1 word
+            case 0x0C: m_in_expect = 3; break; // 2D Rotate (Angle, X, Y) -> 2 words
+            case 0x1C: m_in_expect = 6; break; // 3D Rotate -> 3 words
+            case 0x02: m_in_expect = 7; break; // Parameter (Fx, Fy, Fz, Lfe, Les, Aas, Azs) -> 4 words
+            case 0x0A:                         // Raster (Vs) -> continuous 4-word blocks
+            case 0x1A: m_in_expect = 1; break;
+            case 0x06: m_in_expect = 3; break; // Project (X, Y, Z) -> 3 words
+            case 0x0E: m_in_expect = 2; break; // Target (H, V) -> 2 words
+            case 0x01:                         // Attitude A (m, Rz, Ry, Rx) -> 0 words
+            case 0x11:                         // Attitude B
+            case 0x21: m_in_expect = 4; break; // Attitude C
+            case 0x0D:                         // Objective A (X, Y, Z) -> 3 words
+            case 0x1D:                         // Objective B
+            case 0x2D: m_in_expect = 3; break; // Objective C
+            case 0x03:                         // Subjective A (X, Y, Z) -> 3 words
+            case 0x13:                         // Subjective B
+            case 0x23: m_in_expect = 3; break; // Subjective C
+            case 0x0B:                         // Gyrate A (X, Y, Z) -> 1 word
+            case 0x1B:                         // Gyrate B
+            case 0x2B: m_in_expect = 3; break; // Gyrate C
+            default:
+                m_waiting_for_command = true;
+                return;
+        }
+        m_waiting_for_command = false;
+        return;
+    }
+
+    // Collect 16-bit parameter words (low byte first, then high byte)
+    if (!m_high_byte_toggle) {
+        m_low_latch = val;
+        m_high_byte_toggle = true;
+    } else {
+        m_high_byte_toggle = false;
+        if (m_in_count < 16) {
+            m_in[m_in_count++] = static_cast<int16_t>(m_low_latch | (static_cast<uint16_t>(val) << 8));
+        }
+        if (m_in_count >= m_in_expect) {
+            execute();
+            if (m_out_expect == 0) {
+                m_waiting_for_command = true;
+            }
+        }
+    }
+}
+
+void SNES_DSP1::execute() {
+    constexpr double PI = 3.14159265358979323846;
+    auto to_rad = [](int16_t a) -> double { return static_cast<double>(a) * PI / 32768.0; };
+
+    switch (m_cmd) {
+        case 0x00: { // Multiply: (K * I) >> 15
+            int32_t res = (static_cast<int32_t>(m_in[0]) * static_cast<int32_t>(m_in[1])) >> 15;
+            push_out16(static_cast<int16_t>(res));
+            break;
+        }
+        case 0x10: { // Inverse: 1 / (a * 2^b)
+            int16_t a = m_in[0];
+            int16_t b = m_in[1];
+            if (a == 0) {
+                push_out16(0x7FFF);
+                push_out16(0);
+            } else {
+                double val = 1.0 / (static_cast<double>(a) / 32768.0 * std::ldexp(1.0, b));
+                int exp = 0;
+                double mant = std::frexp(val, &exp);
+                int16_t out_a = static_cast<int16_t>(std::clamp(mant * 32768.0, -32768.0, 32767.0));
+                int16_t out_b = static_cast<int16_t>(exp);
+                push_out16(out_a);
+                push_out16(out_b);
+            }
+            break;
+        }
+        case 0x04: { // Triangle: Sin and Cos scaled by Radius
+            double rad = to_rad(m_in[0]);
+            double r   = static_cast<double>(m_in[1]);
+            push_out16(static_cast<int16_t>(std::sin(rad) * r));
+            push_out16(static_cast<int16_t>(std::cos(rad) * r));
+            break;
+        }
+        case 0x08: { // Radius: (X^2 + Y^2 + Z^2) >> 15
+            double x = m_in[0], y = m_in[1], z = m_in[2];
+            int32_t d = static_cast<int32_t>((x * x + y * y + z * z) / 32768.0);
+            push_out16(static_cast<int16_t>(std::clamp(d, -32768, 32767)));
+            break;
+        }
+        case 0x18: { // Range: (X^2 + Y^2 + Z^2 - R^2) >> 15
+            double x = m_in[0], y = m_in[1], z = m_in[2], r = m_in[3];
+            int32_t d = static_cast<int32_t>((x * x + y * y + z * z - r * r) / 32768.0);
+            push_out16(static_cast<int16_t>(std::clamp(d, -32768, 32767)));
+            break;
+        }
+        case 0x28: { // Distance: sqrt(X^2 + Y^2 + Z^2)
+            double x = m_in[0], y = m_in[1], z = m_in[2];
+            push_out16(static_cast<int16_t>(std::sqrt(x * x + y * y + z * z)));
+            break;
+        }
+        case 0x0C: { // Rotate 2D: (Angle, Y1, X1) -> (Y2, X2)
+            double rad = to_rad(m_in[0]);
+            double y1  = m_in[1];
+            double x1  = m_in[2];
+            double s = std::sin(rad), c = std::cos(rad);
+            push_out16(static_cast<int16_t>(y1 * c - x1 * s));
+            push_out16(static_cast<int16_t>(y1 * s + x1 * c));
+            break;
+        }
+        case 0x1C: { // Polar 3D Rotation
+            double rz = to_rad(m_in[0]), rx = to_rad(m_in[1]), ry = to_rad(m_in[2]);
+            double x = m_in[3], y = m_in[4], z = m_in[5];
+            double sz = std::sin(rz), cz = std::cos(rz);
+            double sx = std::sin(rx), cx = std::cos(rx);
+            double sy = std::sin(ry), cy = std::cos(ry);
+
+            double x1 = x * cz - y * sz, y1 = x * sz + y * cz, z1 = z;
+            double x2 = x1, y2 = y1 * cx - z1 * sx, z2 = y1 * sx + z1 * cx;
+            double x3 = x2 * cy + z2 * sy, y3 = y2, z3 = -x2 * sy + z2 * cy;
+            push_out16(static_cast<int16_t>(x3));
+            push_out16(static_cast<int16_t>(y3));
+            push_out16(static_cast<int16_t>(z3));
+            break;
+        }
+        case 0x02: { // Parameter (Camera setup for Mode 7)
+            m_fx  = m_in[0];
+            m_fy  = m_in[1];
+            m_fz  = m_in[2];
+            m_lfe = m_in[3];
+            m_les = m_in[4];
+            m_aas = static_cast<uint16_t>(m_in[5]);
+            m_azs = static_cast<uint16_t>(m_in[6]);
+
+            double rad_a = to_rad(static_cast<int16_t>(m_aas));
+            double rad_z = to_rad(static_cast<int16_t>(m_azs));
+            double sin_a = std::sin(rad_a), cos_a = std::cos(rad_a);
+            double sin_z = std::sin(rad_z), cos_z = std::cos(rad_z);
+
+            m_vof = static_cast<int16_t>(-static_cast<double>(m_les) * sin_a);
+            m_vva = static_cast<int16_t>(-static_cast<double>(m_les) * cos_a);
+
+            double denom = (std::abs(cos_a) < 0.001) ? ((cos_a < 0) ? -0.001 : 0.001) : cos_a;
+            // Fz and Lfe are in 8.8 fixed point, while Fx/Fy/Cx/Cy are integer world coordinates (>> 8)
+            double dist = ((static_cast<double>(m_fz) * sin_a + static_cast<double>(m_lfe)) / denom) / 256.0;
+            m_cx = static_cast<int16_t>(std::clamp(static_cast<double>(m_fx) + dist * sin_z, -32768.0, 32767.0));
+            m_cy = static_cast<int16_t>(std::clamp(static_cast<double>(m_fy) - dist * cos_z, -32768.0, 32767.0));
+
+            push_out16(m_vof);
+            push_out16(m_vva);
+            push_out16(m_cx);
+            push_out16(m_cy);
+            break;
+        }
+        case 0x0A:
+        case 0x1A: { // Raster: Start continuous Mode 7 Matrix stream from scanline Vs
+            m_raster_vs = m_in[0];
+            generate_next_raster_line();
+            break;
+        }
+        case 0x06: { // Project 3D point (X, Y, Z) onto 2D screen (H, V, M)
+            double dx = m_in[0] - m_fx;
+            double dy = m_in[1] - m_fy;
+            double dz = m_in[2] - m_fz;
+
+            double rad_a = to_rad(static_cast<int16_t>(m_aas));
+            double rad_z = to_rad(static_cast<int16_t>(m_azs));
+            double sin_a = std::sin(rad_a), cos_a = std::cos(rad_a);
+            double sin_z = std::sin(rad_z), cos_z = std::cos(rad_z);
+
+            double rx =  dx * cos_z + dy * sin_z;
+            double ry = -dx * sin_z + dy * cos_z;
+            double py =  ry * sin_a - dz * cos_a;
+            double pz =  ry * cos_a + dz * sin_a - m_lfe;
+
+            if (std::abs(pz) < 1.0) pz = (pz < 0) ? -1.0 : 1.0;
+            double inv_z = static_cast<double>(std::abs(m_les)) / std::abs(pz);
+
+            int16_t h = static_cast<int16_t>(std::clamp(rx * inv_z, -32768.0, 32767.0));
+            int16_t v = static_cast<int16_t>(std::clamp(m_vof - py * inv_z, -32768.0, 32767.0));
+            int16_t m = static_cast<int16_t>(std::clamp(inv_z * 256.0, 0.0, 32767.0));
+            push_out16(h);
+            push_out16(v);
+            push_out16(m);
+            break;
+        }
+        case 0x0E: { // Target: Screen (H, V) -> Ground (X, Y)
+            double h = m_in[0];
+            double v = m_in[1];
+            double py = v - m_vof;
+            if (std::abs(py) < 1.0) py = 1.0;
+
+            double rad_a = to_rad(static_cast<int16_t>(m_aas));
+            double rad_z = to_rad(static_cast<int16_t>(m_azs));
+            double sin_a = std::sin(rad_a), cos_a = std::cos(rad_a);
+            double sin_z = std::sin(rad_z), cos_z = std::cos(rad_z);
+
+            double scale = static_cast<double>(m_fz * cos_a - m_lfe * sin_a) / (py * (m_les != 0 ? std::abs(m_les) : 256));
+            double gx = m_cx + scale * (h * cos_z - m_vva * sin_z);
+            double gy = m_cy + scale * (h * sin_z + m_vva * cos_z);
+            push_out16(static_cast<int16_t>(std::clamp(gx, -32768.0, 32767.0)));
+            push_out16(static_cast<int16_t>(std::clamp(gy, -32768.0, 32767.0)));
+            break;
+        }
+        case 0x01:
+        case 0x11:
+        case 0x21: { // Attitude A / B / C
+            int idx = (m_cmd >> 4) & 3;
+            double m  = static_cast<double>(m_in[0]) / 32768.0;
+            double rz = to_rad(m_in[1]);
+            double ry = to_rad(m_in[2]);
+            double rx = to_rad(m_in[3]);
+
+            double sz = std::sin(rz), cz = std::cos(rz);
+            double sy = std::sin(ry), cy = std::cos(ry);
+            double sx = std::sin(rx), cx = std::cos(rx);
+
+            m_matrix[idx][0][0] = static_cast<int16_t>(m * (cy * cz - sx * sy * sz) * 32768.0);
+            m_matrix[idx][0][1] = static_cast<int16_t>(m * (-cx * sz) * 32768.0);
+            m_matrix[idx][0][2] = static_cast<int16_t>(m * (sy * cz + sx * cy * sz) * 32768.0);
+
+            m_matrix[idx][1][0] = static_cast<int16_t>(m * (cy * sz + sx * sy * cz) * 32768.0);
+            m_matrix[idx][1][1] = static_cast<int16_t>(m * (cx * cz) * 32768.0);
+            m_matrix[idx][1][2] = static_cast<int16_t>(m * (sy * sz - sx * cy * cz) * 32768.0);
+
+            m_matrix[idx][2][0] = static_cast<int16_t>(m * (-cx * sy) * 32768.0);
+            m_matrix[idx][2][1] = static_cast<int16_t>(m * (sx) * 32768.0);
+            m_matrix[idx][2][2] = static_cast<int16_t>(m * (cx * cy) * 32768.0);
+            break;
+        }
+        case 0x0D:
+        case 0x1D:
+        case 0x2D: { // Objective (Global -> Object coordinates)
+            int idx = (m_cmd >> 4) & 3;
+            int32_t x = m_in[0], y = m_in[1], z = m_in[2];
+            for (int c = 0; c < 3; ++c) {
+                int32_t sum = (x * m_matrix[idx][0][c] + y * m_matrix[idx][1][c] + z * m_matrix[idx][2][c]) >> 15;
+                push_out16(static_cast<int16_t>(std::clamp(sum, -32768, 32767)));
+            }
+            break;
+        }
+        case 0x03:
+        case 0x13:
+        case 0x23: { // Subjective (Object -> Global coordinates)
+            int idx = (m_cmd >> 4) & 3;
+            int32_t x = m_in[0], y = m_in[1], z = m_in[2];
+            for (int r = 0; r < 3; ++r) {
+                int32_t sum = (x * m_matrix[idx][r][0] + y * m_matrix[idx][r][1] + z * m_matrix[idx][r][2]) >> 15;
+                push_out16(static_cast<int16_t>(std::clamp(sum, -32768, 32767)));
+            }
+            break;
+        }
+        case 0x0B:
+        case 0x1B:
+        case 0x2B: { // Inner Product / Gyrate
+            int idx = (m_cmd >> 4) & 3;
+            int32_t x = m_in[0], y = m_in[1], z = m_in[2];
+            int32_t sum = (x * m_matrix[idx][0][2] + y * m_matrix[idx][1][2] + z * m_matrix[idx][2][2]) >> 15;
+            push_out16(static_cast<int16_t>(std::clamp(sum, -32768, 32767)));
+            break;
+        }
+    }
 }

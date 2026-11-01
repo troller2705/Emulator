@@ -64,7 +64,14 @@ void SNES_PPU::reset() {
     m_m7y     = 0;
     m_m7hofs  = 0;
     m_m7vofs  = 0;
-    m_m7_prev = 0;
+    m_m7hofs_prev = 0;
+    m_m7vofs_prev = 0;
+    m_m7a_prev = 0;
+    m_m7b_prev = 0;
+    m_m7c_prev = 0;
+    m_m7d_prev = 0;
+    m_m7x_prev = 0;
+    m_m7y_prev = 0;
     m_mpy     = 0;
 
     m_obsel = 0;
@@ -221,14 +228,14 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             m_bg_nba[1] = val;
             break;
         case 0x210D:
-            m_m7hofs = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7hofs = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7hofs_prev);
+            m_m7hofs_prev = val;
             m_bg_hofs[0] = ((val << 8) | (m_bg_scroll_prev & ~7) | ((m_bg_hofs[0] >> 8) & 7)) & 0x03FF;
             m_bg_scroll_prev = val;
             break;
         case 0x210E:
-            m_m7vofs = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7vofs = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7vofs_prev);
+            m_m7vofs_prev = val;
             m_bg_vofs[0] = ((val << 8) | m_bg_scroll_prev) & 0x03FF;
             m_bg_scroll_prev = val;
             break;
@@ -283,30 +290,30 @@ void SNES_PPU::writeRegister(uint16_t addr, uint8_t val) {
             m_m7sel = val;
             break;
         case 0x211B:
-            m_m7a = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7a = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7a_prev);
+            m_m7a_prev = val;
             m_mpy = static_cast<int32_t>(m_m7a) * static_cast<int32_t>(static_cast<int8_t>(m_m7b >> 8));
             break;
         case 0x211C:
-            m_m7b = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7b = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7b_prev);
+            m_m7b_prev = val;
             m_mpy = static_cast<int32_t>(m_m7a) * static_cast<int32_t>(static_cast<int8_t>(val));
             break;
         case 0x211D:
-            m_m7c = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7c = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7c_prev);
+            m_m7c_prev = val;
             break;
         case 0x211E:
-            m_m7d = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7d = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7d_prev);
+            m_m7d_prev = val;
             break;
         case 0x211F:
-            m_m7x = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7x = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7x_prev);
+            m_m7x_prev = val;
             break;
         case 0x2120:
-            m_m7y = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7_prev);
-            m_m7_prev = val;
+            m_m7y = static_cast<int16_t>((static_cast<uint16_t>(val) << 8) | m_m7y_prev);
+            m_m7y_prev = val;
             break;
         case 0x2121:
             m_cgram_addr = val;
@@ -531,40 +538,35 @@ void SNES_PPU::renderScanline(int line) {
 }
 
 void SNES_PPU::renderMode7Layer(int line, const bool* main_mask, const bool* sub_mask) {
-    bool main_en = (m_main_screen_mask & 0x01) != 0;
-    bool sub_en  = (m_sub_screen_mask & 0x01) != 0;
+    // If we are in Mode 7, always allow rendering the affine layer for the race track
+    bool main_en = (m_bg_mode == 7) || ((m_main_screen_mask & 0x01) != 0);
+    bool sub_en  = (m_bg_mode == 7) || ((m_sub_screen_mask & 0x01) != 0);
     if (!main_en && !sub_en) return;
 
-    auto sign_extend_13 = [](int16_t val) -> int32_t {
-        return (val & 0x1000) ? (val | ~0x1FFF) : (val & 0x1FFF);
+    // SNES Mode 7 uses 13-bit signed coordinates for camera position and offsets
+    auto sign_extend_13 = [](int32_t val) -> int32_t {
+        val &= 0x1FFF; // Keep only bottom 13 bits
+        return (val & 0x1000) ? (val | ~0x1FFF) : val; // Sign extend if 13th bit (0x1000) is 1
     };
 
-    auto clip_11 = [](int32_t val) -> int32_t {
-        return (val & 0x2000) ? (val | ~0x03FF) : (val & 0x03FF);
-    };
-
+    int32_t cx = sign_extend_13(m_m7x);
+    int32_t cy = sign_extend_13(m_m7y);
     int32_t hofs = sign_extend_13(m_m7hofs);
     int32_t vofs = sign_extend_13(m_m7vofs);
-    int32_t cx   = sign_extend_13(m_m7x);
-    int32_t cy   = sign_extend_13(m_m7y);
 
-    int32_t a = m_m7a;
-    int32_t b = m_m7b;
-    int32_t c = m_m7c;
-    int32_t d = m_m7d;
+    int32_t a = static_cast<int16_t>(m_m7a);
+    int32_t b = static_cast<int16_t>(m_m7b);
+    int32_t c = static_cast<int16_t>(m_m7c);
+    int32_t d = static_cast<int16_t>(m_m7d);
 
     int screen_y = (m_m7sel & 0x02) ? (255 - line) : line;
     uint8_t screen_over = (m_m7sel >> 6) & 0x03;
 
-    int32_t x_base = ((a * clip_11(hofs - cx)) & ~63) +
-                     ((b * clip_11(vofs - cy)) & ~63) +
-                     ((b * screen_y) & ~63) +
-                     (cx << 8);
+    int32_t H = sign_extend_13(hofs - cx);
+    int32_t V = sign_extend_13(vofs - cy);
 
-    int32_t y_base = ((c * clip_11(hofs - cx)) & ~63) +
-                     ((d * clip_11(vofs - cy)) & ~63) +
-                     ((d * screen_y) & ~63) +
-                     (cy << 8);
+    int32_t x_base = ((a * H) & ~63) + ((b * V) & ~63) + ((b * screen_y) & ~63) + (cx << 8);
+    int32_t y_base = ((c * H) & ~63) + ((d * V) & ~63) + ((d * screen_y) & ~63) + (cy << 8);
 
     for (int x = 0; x < SCREEN_WIDTH; ++x) {
         int screen_x = (m_m7sel & 0x01) ? (255 - x) : x;
@@ -589,20 +591,21 @@ void SNES_PPU::renderMode7Layer(int line, const bool* main_mask, const bool* sub
         if (!use_tile_zero) {
             int tile_x = (vram_x >> 3) & 0x7F;
             int tile_y = (vram_y >> 3) & 0x7F;
-            uint32_t map_addr = ((tile_y * 128 + tile_x) * 2) & 0xFFFE;
+            // Mode 7 128x128 tilemap uses even bytes across 32 KB ($0000 - $7FFE)
+            uint32_t map_addr = ((tile_y * 128 + tile_x) * 2) & 0x7FFE;
             tile_id = m_vram[map_addr];
         }
 
         int fine_x = vram_x & 7;
         int fine_y = vram_y & 7;
-        uint32_t chr_addr = ((tile_id * 64 + fine_y * 8 + fine_x) * 2 + 1) & 0xFFFF;
+        // Mode 7 8bpp tiles (256 tiles * 64 pixels) use odd bytes across 32 KB ($0001 - $7FFF)
+        uint32_t chr_addr = ((tile_id * 64 + fine_y * 8 + fine_x) * 2 + 1) & 0x7FFF;
         uint8_t color_idx = m_vram[chr_addr];
 
-        if (color_idx != 0) {
-            uint16_t bgr = m_cgram[color_idx * 2] | (m_cgram[color_idx * 2 + 1] << 8);
-            if (main_en && !main_mask[x]) { m_main_color[x] = bgr; m_main_layer[x] = 0; }
-            if (sub_en && !sub_mask[x])  { m_sub_color[x]  = bgr; m_sub_layer[x]  = 0; }
-        }
+        // Mode 7 color index 0 is valid and opaque (drawn from CGRAM[0])
+        uint16_t bgr = m_cgram[color_idx * 2] | (m_cgram[color_idx * 2 + 1] << 8);
+        if (main_en && !main_mask[x]) { m_main_color[x] = bgr; m_main_layer[x] = 0; }
+        if (sub_en && !sub_mask[x])  { m_sub_color[x]  = bgr; m_sub_layer[x]  = 0; }
     }
 }
 

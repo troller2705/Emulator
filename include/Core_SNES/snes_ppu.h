@@ -113,7 +113,17 @@ private:
     int16_t  m_m7y     = 0;
     int16_t  m_m7hofs  = 0;
     int16_t  m_m7vofs  = 0;
-    uint8_t  m_m7_prev = 0;
+
+    // Independent per-register latches to prevent HDMA cross-talk jitter
+    uint8_t  m_m7hofs_prev = 0;
+    uint8_t  m_m7vofs_prev = 0;
+    uint8_t  m_m7a_prev    = 0;
+    uint8_t  m_m7b_prev    = 0;
+    uint8_t  m_m7c_prev    = 0;
+    uint8_t  m_m7d_prev    = 0;
+    uint8_t  m_m7x_prev    = 0;
+    uint8_t  m_m7y_prev    = 0;
+
     int32_t  m_mpy     = 0;
 
     // Sprite Configuration ($2101)

@@ -19,11 +19,17 @@ void SNESCore::run_frame() {
     m_mmu.initHDMA();
 
     for (int line = 0; line < 262; ++line) {
+        // Run HDMA at the start of H-Blank/Scanline so parallax and raster effects apply instantly
+        if (line < 225) {
+            m_mmu.stepHDMA();
+        }
+
         int line_cycles = 0;
+        m_mmu.clear_irq_flag();
+
         while (line_cycles < 227) { // 227 CPU cycles per scanline
             int cpu_cycles = m_cpu.step();
 
-            // Calculate approximate H-Dot (0 to ~340) from CPU cycles
             int h_dot = (line_cycles * 340) / 227;
             m_mmu.check_irq(h_dot, line);
 
@@ -39,11 +45,8 @@ void SNESCore::run_frame() {
             line_cycles += cpu_cycles;
         }
 
-        if (line < 225) {
-            m_mmu.stepHDMA();
-        }
-
-        if (m_mmu.get_ppu().stepScanline()) {
+        bool entered_vblank = m_mmu.get_ppu().stepScanline();
+        if (entered_vblank) {
             m_mmu.notify_vblank_start();
             if (m_mmu.poll_nmi()) {
                 m_cpu.trigger_nmi();
