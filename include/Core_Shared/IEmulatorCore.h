@@ -20,6 +20,13 @@ struct CPUState {
     uint16_t snes_A = 0, snes_X = 0, snes_Y = 0, snes_D = 0;
     uint8_t  snes_PB = 0, snes_DB = 0, snes_P = 0;
     bool flag_m = false, flag_x = false, flag_e = false;
+
+    // Sega Genesis 32-bit Motorola 68000 Registers
+    bool is_genesis = false;
+    std::array<uint32_t, 8> m68k_d{};
+    std::array<uint32_t, 8> m68k_a{};
+    uint32_t m68k_pc = 0;
+    uint16_t m68k_sr = 0;
 };
 
 class IEmulatorCore {

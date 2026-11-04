@@ -115,6 +115,12 @@ set(SOURCES
         src/Core_SNES/snes_ppu.cpp
         src/Core_SNES/snes_apu.cpp
 
+        # SEGA Genesis Core
+        src/Core_Genesis/genesis_core.cpp
+        src/Core_Genesis/genesis_mmu.cpp
+        src/Core_Genesis/genesis_cpu.cpp
+        src/Core_Genesis/genesis_vdp.cpp
+
         # ImGui Backends
         src/imgui/imgui_impl_sdl2.cpp
         src/imgui/imgui_impl_sdlrenderer2.cpp

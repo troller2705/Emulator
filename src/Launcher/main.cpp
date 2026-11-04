@@ -12,11 +12,13 @@
 // --- IMGUI HEADERS ---
 #include <imgui.h>
 
-#include "../../include/Launcher/input_mapper.h"
+#include "Launcher/input_mapper.h"
 
-#include "../../include/Core_GBC/gbc_core.h"
-#include "../../include/Core_GBA/gba_core.h"
-#include "../../include/Core_SNES/snes_core.h"
+#include "Core_GBC/gbc_core.h"
+#include "Core_GBA/gba_core.h"
+#include "Core_SNES/snes_core.h"
+#include "Core_Genesis/genesis_core.h"
+
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "imgui_memory_editor.h"
@@ -45,14 +47,16 @@ enum class CoreType {
     AutoDetect = 0,
     GB_GBC,
     GBA,
-    SNES
+    SNES,
+    Genesis
 };
 
 const char* CORE_NAMES[] = {
     "Auto-Detect (By Extension)",
     "Game Boy / Game Boy Color (GBCCore)",
     "Game Boy Advance (GBACore)",
-    "Super Nintendo (SNESCore)"
+    "Super Nintendo (SNESCore)",
+    "Sega Genesis / Mega Drive (GenesisCore)"
 };
 
 const std::string CONFIG_FILE = "emulator_config.txt";
@@ -90,7 +94,7 @@ std::vector<fs::path> scan_rom_directory(const std::string& dir_path) {
         if (entry.is_regular_file()) {
             std::string ext = entry.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext == ".gb" || ext == ".gbc" || ext == ".gba" || ext == ".sfc" || ext == ".smc") {
+            if (ext == ".gb" || ext == ".gbc" || ext == ".gba" || ext == ".sfc" || ext == ".smc" || ext == ".md" || ext == ".gen" || ext == ".bin") {
                 roms.push_back(entry.path());
             }
         }
@@ -210,6 +214,8 @@ int main(int argc, char* argv[]) {
                 new_core = std::make_unique<GBACore>();
             } else if (ext == ".sfc" || ext == ".smc") {
                 new_core = std::make_unique<SNESCore>();
+            } else if (ext == ".md" || ext == ".gen" || ext == ".bin") {
+                new_core = std::make_unique<GenesisCore>();
             }
         } else if (core_choice == CoreType::GB_GBC) {
             new_core = std::make_unique<GBCCore>();
@@ -217,6 +223,8 @@ int main(int argc, char* argv[]) {
             new_core = std::make_unique<GBACore>();
         } else if (core_choice == CoreType::SNES) {
             new_core = std::make_unique<SNESCore>();
+        } else if (core_choice == CoreType::Genesis) {
+            new_core = std::make_unique<GenesisCore>();
         }
 
         if (!new_core || !new_core->load_rom(rom_data)) {
@@ -407,6 +415,13 @@ int main(int argc, char* argv[]) {
                     ImGui::Text("SP: %04X | DP: %04X | DB: %02X",
                         state.SP, state.snes_D, state.snes_DB);
                     ImGui::Text("P (Status): 0x%02X", state.snes_P);
+                } else if (state.is_genesis) {
+                    ImGui::Text("State: Motorola 68000 | SR: 0x%04X", state.m68k_sr);
+                    ImGui::Text("PC: 0x%06X | SP (A7): 0x%08X", state.m68k_pc, state.m68k_a[7]);
+                    ImGui::Separator();
+                    for (int i = 0; i < 8; ++i) {
+                        ImGui::Text("D%d: 0x%08X  |  A%d: 0x%08X", i, state.m68k_d[i], i, state.m68k_a[i]);
+                    }
                 } else {
                     ImGui::Text("PC: 0x%04X", state.PC);
                     ImGui::Text("SP: 0x%04X", state.SP);
