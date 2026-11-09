@@ -189,8 +189,8 @@ Emulator/
         └── genesis_core.cpp, genesis_cpu.cpp, genesis_mmu.cpp, genesis_vdp.cpp
 ```
 
-### 🛠️ Building from Source
-## Prerequisites
+## 🛠️ Building from Source
+### Prerequisites
 - C++ Compiler: C++17 or newer (MSVC, MinGW-w64 GCC, or Clang)
 - Build System: CMake 3.15+ (with Ninja or Make)
 - Dependencies: SDL2 (2.0.17+ required for SDL_RenderGeometryRaw)[cite: 3, 4, 10, 11] and Dear ImGui[cite: 3, 4, 10, 11]
